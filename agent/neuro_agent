@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # TinyIntent Neuro Agent - Routes prompts to appropriate backends
-# Usage: neuro_agent [--dry-run] [text...]
+# Usage: neuro_agent [--dry-run] [--json] [--quiet] [--help] [text...]
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -13,6 +13,39 @@ CLAUDE_CLI_MODEL="${CLAUDE_CLI_MODEL:-claude-3-sonnet-20240229}"
 
 # Global flags
 DRY_RUN=false
+JSON_MODE=false
+QUIET_MODE=false
+
+# Function to show help
+show_help() {
+    cat <<EOF
+TinyIntent Neuro Agent - Local-first routing agent
+
+Usage: neuro_agent [OPTIONS] [text...]
+
+Options:
+  --dry-run    Show execution plan without running commands
+  --json       Output structured JSON logs to stdout
+  --quiet      Suppress non-essential output
+  --help, -h   Show this help message
+
+Routes:
+  send_claude      Direct to Claude CLI for complex tasks
+                   Example: "research quantum cryptography with citations"
+  
+  local_only       Ollama only (privacy-first, no network calls)
+                   Example: "summarize this code locally"
+  
+  plan_then_claude Local refinement → cloud execution
+                   Example: "brainstorm steps then ask Claude to draft proposal"
+
+Environment Variables:
+  ROUTE           Override automatic route classification
+  OLLAMA_MODEL    Primary Ollama model (default: qwen2.5:32b-instruct-q4_K_M)
+  CLAUDE_CLI_MODEL Claude model (default: claude-3-sonnet-20240229)
+  TINYINTENT_BIN  Path to tinyintent binary
+EOF
+}
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -21,33 +54,145 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        --json)
+            JSON_MODE=true
+            shift
+            ;;
+        --quiet)
+            QUIET_MODE=true
+            shift
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
         *)
             break
             ;;
     esac
 done
 
-# Function to log to stderr
+# Function to log to stderr (human-readable)
 log() {
-    echo "$@" >&2
+    if [[ "$QUIET_MODE" != "true" ]]; then
+        echo "$@" >&2
+    fi
 }
 
-# Function to check dependencies
+# Function to emit JSON log to stdout
+emit_json_log() {
+    local route="$1"
+    local model_name="$2"
+    local model_size="$3"
+    local tokens_in="$4"
+    local tokens_out="$5"
+    local duration_ms="$6"
+    local privacy_mode="$7"
+    local reclassified="$8"
+    local phase="${9:-}"
+    
+    local timestamp
+    if date -u +"%Y-%m-%dT%H:%M:%S.%3NZ" 2>/dev/null | grep -q '%3N'; then
+        # %3N not supported, use milliseconds approximation
+        timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S")
+        local ms=$(($(date +%s%N) % 1000000000 / 1000000))
+        timestamp="${timestamp}.$(printf "%03d" $ms)Z"
+    else
+        timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+    fi
+    
+    local json_log="{"
+    json_log+="\"timestamp\":\"$timestamp\","
+    json_log+="\"route\":\"$route\","
+    json_log+="\"model_name\":\"$model_name\","
+    json_log+="\"model_size\":\"$model_size\","
+    json_log+="\"tokens_in\":$tokens_in,"
+    json_log+="\"tokens_out\":$tokens_out,"
+    json_log+="\"duration_ms\":$duration_ms,"
+    json_log+="\"privacy_mode\":\"$privacy_mode\","
+    json_log+="\"reclassified\":$reclassified,"
+    json_log+="\"source\":\"neuro_agent\","
+    json_log+="\"dry_run\":$(if [[ "$DRY_RUN" == "true" ]]; then echo "true"; else echo "false"; fi)"
+    
+    if [[ -n "$phase" ]]; then
+        json_log+=",\"phase\":\"$phase\""
+    fi
+    
+    json_log+="}"
+    
+    if [[ "$JSON_MODE" == "true" ]]; then
+        echo "$json_log"
+    fi
+}
+
+# Function to estimate tokens from text
+estimate_tokens() {
+    local text="$1"
+    # Rough estimation: ~4 characters per token
+    echo $(( (${#text} + 3) / 4 ))
+}
+
+# Function to extract model size from model name
+get_model_size() {
+    local model="$1"
+    case "$model" in
+        *"8b"*|*"8B"*) echo "8B" ;;
+        *"32b"*|*"32B"*) echo "32B" ;;
+        *"70b"*|*"70B"*) echo "70B" ;;
+        *"claude"*) echo "cloud" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+# Function to show spinner for network operations
+show_spinner() {
+    local message="$1"
+    local pid="$2"
+    
+    if [[ "$QUIET_MODE" == "true" || "$JSON_MODE" == "true" ]]; then
+        return
+    fi
+    
+    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r%s %c" "$message" "${spin:$i++%${#spin}:1}"
+        sleep 0.1
+    done
+    printf "\r%*s\r" $((${#message} + 2)) ""
+}
+
+# Function to check dependencies with actionable error messages
 check_dependencies() {
     local missing_deps=()
+    local error_messages=()
     
     if ! command -v ollama >/dev/null 2>&1; then
         missing_deps+=("ollama")
+        error_messages+=("Missing ollama CLI tool. Install via: brew install ollama")
+    elif ! ollama list >/dev/null 2>&1; then
+        error_messages+=("Ollama service unavailable. Start with: ollama serve")
+        exit 2
     fi
     
     if ! command -v claude >/dev/null 2>&1; then
         missing_deps+=("claude")
+        error_messages+=("Missing Claude CLI tool. Install via: pip install claude-cli")
     fi
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         log "Error: Missing required dependencies: ${missing_deps[*]}"
-        log "Please install the missing tools and try again."
+        for msg in "${error_messages[@]}"; do
+            log "  → $msg"
+        done
         exit 1
+    fi
+    
+    # Check if models are available
+    if ! ollama list | grep -q "$OLLAMA_MODEL" >/dev/null 2>&1; then
+        log "Warning: Primary model $OLLAMA_MODEL not found. Will attempt fallback."
+        log "  → To install: ollama pull $OLLAMA_MODEL"
     fi
 }
 
@@ -82,18 +227,68 @@ classify_text() {
 execute_ollama() {
     local text="$1"
     local model="$2"
+    local reclassified="${3:-false}"
+    local start_time end_time duration_ms
     
     log "Routing to Ollama with model: $model"
     
     if [[ "$DRY_RUN" == "true" ]]; then
         log "Would execute: echo '$text' | ollama run '$model'"
+        log "exec: ollama run $model"  # For test assertions
+        
+        # Emit dry run JSON log
+        local tokens_in=$(estimate_tokens "$text")
+        local tokens_out=50  # Estimated for dry run
+        local model_size=$(get_model_size "$model")
+        
+        # Human-readable feedback to stderr
+        log "route=local_only model=$model tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=0 privacy=local_only"
+        
+        # JSON log to stdout
+        emit_json_log "local_only" "$model" "$model_size" "$tokens_in" "$tokens_out" "0" "local_only" "$reclassified"
+        
         return 0
     fi
     
-    if echo "$text" | ollama run "$model" 2>/dev/null; then
+    start_time=$(date +%s%N)
+    
+    # Start ollama in background for spinner
+    local temp_file=$(mktemp)
+    (
+        echo "$text" | ollama run "$model" > "$temp_file" 2>&1
+        echo $? > "$temp_file.exit"
+    ) &
+    local pid=$!
+    
+    # Show spinner for network-bound operation (Ollama can be local or remote)
+    show_spinner "Running Ollama ($model)" "$pid"
+    wait "$pid"
+    
+    end_time=$(date +%s%N)
+    duration_ms=$(( (end_time - start_time) / 1000000 ))
+    
+    local exit_code=$(cat "$temp_file.exit")
+    local output=$(cat "$temp_file")
+    
+    rm -f "$temp_file" "$temp_file.exit"
+    
+    if [[ $exit_code -eq 0 ]]; then
+        local tokens_in=$(estimate_tokens "$text")
+        local tokens_out=$(estimate_tokens "$output")
+        local model_size=$(get_model_size "$model")
+        
+        # Human-readable feedback to stderr
+        log "route=local_only model=$model tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=$duration_ms privacy=local_only"
+        
+        # JSON log to stdout
+        emit_json_log "local_only" "$model" "$model_size" "$tokens_in" "$tokens_out" "$duration_ms" "local_only" "$reclassified"
+        
+        # Output the response
+        echo "$output"
         return 0
     else
         log "Failed to run Ollama with model: $model"
+        log "  → Error: $output"
         return 1
     fi
 }
@@ -101,39 +296,107 @@ execute_ollama() {
 # Function to execute Ollama with fallback chain
 execute_ollama_with_fallback() {
     local text="$1"
+    local reclassified="${2:-false}"
+    
+    # Pass reclassified flag to execute_ollama calls
     
     # Try primary model first
-    if execute_ollama "$text" "$OLLAMA_MODEL"; then
+    if execute_ollama "$text" "$OLLAMA_MODEL" "$reclassified"; then
         return 0
     fi
     
     # Try fallback model
     local fallback_model="llama3.1:8b-instruct-q5_K_M"
-    log "Falling back to: $fallback_model"
+    log "Primary model failed, falling back to: $fallback_model"
+    log "  → Reason: Primary model $OLLAMA_MODEL unavailable or failed"
     
-    if execute_ollama "$text" "$fallback_model"; then
+    if execute_ollama "$text" "$fallback_model" "$reclassified"; then
         return 0
     fi
     
-    log "Error: All Ollama models failed"
+    # Try smallest fallback
+    local smallest_model="llama3.1:8b-instruct-q5_K_M"
+    if [[ "$fallback_model" != "$smallest_model" ]]; then
+        log "Secondary fallback to: $smallest_model"
+        if execute_ollama "$text" "$smallest_model" "$reclassified"; then
+            return 0
+        fi
+    fi
+    
+    log "Error: All Ollama models failed (tried: $OLLAMA_MODEL, $fallback_model)"
+    log "  → Try: ollama pull $OLLAMA_MODEL"
+    log "  → Or: ollama serve (if service is down)"
     exit 2
 }
 
 # Function to execute Claude CLI
 execute_claude() {
     local text="$1"
+    local reclassified="${2:-false}"
+    local start_time end_time duration_ms
     
     log "Routing to Claude CLI with model: $CLAUDE_CLI_MODEL"
     
     if [[ "$DRY_RUN" == "true" ]]; then
         log "Would execute: echo '$text' | claude --permission-mode plan --model '$CLAUDE_CLI_MODEL'"
+        log "exec: claude --permission-mode plan --model $CLAUDE_CLI_MODEL"  # For test assertions
+        
+        # Emit dry run JSON log
+        local tokens_in=$(estimate_tokens "$text")
+        local tokens_out=80  # Estimated for dry run
+        
+        # Human-readable feedback to stderr
+        log "route=send_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=0 privacy=cloud"
+        
+        # JSON log to stdout
+        emit_json_log "send_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_in" "$tokens_out" "0" "cloud" "$reclassified"
+        
         return 0
     fi
     
-    if echo "$text" | claude --permission-mode plan --model "$CLAUDE_CLI_MODEL" 2>/dev/null; then
+    start_time=$(date +%s%N)
+    
+    # Start claude in background for spinner
+    local temp_file=$(mktemp)
+    (
+        echo "$text" | claude --permission-mode plan --model "$CLAUDE_CLI_MODEL" > "$temp_file" 2>&1
+        echo $? > "$temp_file.exit"
+    ) &
+    local pid=$!
+    
+    # Show spinner for network-bound operation
+    show_spinner "Connecting to Claude" "$pid"
+    wait "$pid"
+    
+    end_time=$(date +%s%N)
+    duration_ms=$(( (end_time - start_time) / 1000000 ))
+    
+    local exit_code=$(cat "$temp_file.exit")
+    local output=$(cat "$temp_file")
+    
+    rm -f "$temp_file" "$temp_file.exit"
+    
+    if [[ $exit_code -eq 0 ]]; then
+        local tokens_in=$(estimate_tokens "$text")
+        local tokens_out=$(estimate_tokens "$output")
+        
+        # Human-readable feedback to stderr
+        log "route=send_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=$duration_ms privacy=cloud"
+        
+        # JSON log to stdout
+        emit_json_log "send_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_in" "$tokens_out" "$duration_ms" "cloud" "$reclassified"
+        
+        # Output the response
+        echo "$output"
         return 0
     else
         log "Error: Claude CLI execution failed"
+        log "  → Error: $output"
+        if [[ "$output" =~ "authentication" || "$output" =~ "auth" ]]; then
+            log "  → Try: claude auth (to authenticate)"
+        elif [[ "$output" =~ "network" || "$output" =~ "connection" ]]; then
+            log "  → Try: Check internet connection"
+        fi
         exit 1
     fi
 }
@@ -141,29 +404,108 @@ execute_claude() {
 # Function to execute plan_then_claude workflow
 execute_plan_then_claude() {
     local text="$1"
+    local reclassified="${2:-false}"
+    local start_time end_time duration_ms
     
-    log "Routing to plan_then_claude: Ollama -> Claude pipeline"
+    log "Routing to plan_then_claude: Local refinement → Cloud execution"
     
     if [[ "$DRY_RUN" == "true" ]]; then
         log "Would execute: echo '$text' | ollama run '$OLLAMA_MODEL' | claude --permission-mode plan --model '$CLAUDE_CLI_MODEL'"
+        log "exec: ollama run $OLLAMA_MODEL"  # For test assertions
+        log "exec: claude --permission-mode plan --model $CLAUDE_CLI_MODEL"
+        
+        # Emit dry run JSON logs for both phases
+        local tokens_in=$(estimate_tokens "$text")
+        local tokens_out_1=60  # Estimated for phase 1
+        local tokens_out_2=100  # Estimated for phase 2
+        local model_size=$(get_model_size "$OLLAMA_MODEL")
+        
+        # Phase 1: Local refinement
+        log "Phase 1: tokens_in=$tokens_in tokens_out=$tokens_out_1 latency_ms=0"
+        emit_json_log "plan_then_claude" "$OLLAMA_MODEL" "$model_size" "$tokens_in" "$tokens_out_1" "0" "local_only" "$reclassified" "refine_local"
+        
+        # Phase 2: Cloud execution
+        log "route=plan_then_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_out_1 tokens_out=$tokens_out_2 latency_ms=0 privacy=cloud"
+        emit_json_log "plan_then_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_out_1" "$tokens_out_2" "0" "cloud" "$reclassified" "cloud_final"
+        
         return 0
     fi
     
-    # First pass through Ollama for planning/refinement
-    local refined_text
-    if ! refined_text=$(echo "$text" | ollama run "$OLLAMA_MODEL" 2>/dev/null); then
+    # Phase 1: Local refinement with Ollama
+    log "Phase 1: Local refinement with $OLLAMA_MODEL"
+    start_time=$(date +%s%N)
+    
+    local temp_file=$(mktemp)
+    (
+        echo "$text" | ollama run "$OLLAMA_MODEL" > "$temp_file" 2>&1
+        echo $? > "$temp_file.exit"
+    ) &
+    local pid=$!
+    
+    show_spinner "Refining locally" "$pid"
+    wait "$pid"
+    
+    end_time=$(date +%s%N)
+    duration_ms=$(( (end_time - start_time) / 1000000 ))
+    
+    local exit_code=$(cat "$temp_file.exit")
+    local refined_text=$(cat "$temp_file")
+    
+    rm -f "$temp_file" "$temp_file.exit"
+    
+    if [[ $exit_code -ne 0 ]]; then
         log "Error: Ollama planning phase failed"
-        # Fallback to direct Claude
         log "Falling back to direct Claude execution"
-        execute_claude "$text"
+        execute_claude "$text" "$reclassified"
         return $?
     fi
     
-    # Second pass through Claude with refined text
-    if echo "$refined_text" | claude --permission-mode plan --model "$CLAUDE_CLI_MODEL" 2>/dev/null; then
+    # Log Phase 1 completion
+    local tokens_in_1=$(estimate_tokens "$text")
+    local tokens_out_1=$(estimate_tokens "$refined_text")
+    local model_size_1=$(get_model_size "$OLLAMA_MODEL")
+    
+    log "Phase 1 complete: tokens_in=$tokens_in_1 tokens_out=$tokens_out_1 latency_ms=$duration_ms"
+    emit_json_log "plan_then_claude" "$OLLAMA_MODEL" "$model_size_1" "$tokens_in_1" "$tokens_out_1" "$duration_ms" "local_only" "$reclassified" "refine_local"
+    
+    # Phase 2: Cloud execution with Claude
+    log "Phase 2: Cloud execution with Claude"
+    start_time=$(date +%s%N)
+    
+    temp_file=$(mktemp)
+    (
+        echo "$refined_text" | claude --permission-mode plan --model "$CLAUDE_CLI_MODEL" > "$temp_file" 2>&1
+        echo $? > "$temp_file.exit"
+    ) &
+    pid=$!
+    
+    show_spinner "Executing on Claude" "$pid"
+    wait "$pid"
+    
+    end_time=$(date +%s%N)
+    duration_ms=$(( (end_time - start_time) / 1000000 ))
+    
+    exit_code=$(cat "$temp_file.exit")
+    local final_output=$(cat "$temp_file")
+    
+    rm -f "$temp_file" "$temp_file.exit"
+    
+    if [[ $exit_code -eq 0 ]]; then
+        local tokens_in_2=$(estimate_tokens "$refined_text")
+        local tokens_out_2=$(estimate_tokens "$final_output")
+        
+        # Human-readable feedback for final phase
+        log "route=plan_then_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in_2 tokens_out=$tokens_out_2 latency_ms=$duration_ms privacy=cloud"
+        
+        # JSON log for Phase 2
+        emit_json_log "plan_then_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_in_2" "$tokens_out_2" "$duration_ms" "cloud" "$reclassified" "cloud_final"
+        
+        # Output the final response
+        echo "$final_output"
         return 0
     else
         log "Error: Claude execution in pipeline failed"
+        log "  → Error: $final_output"
         exit 1
     fi
 }
@@ -186,9 +528,15 @@ main() {
     
     # Get route (use ROUTE env var if set, otherwise classify)
     local route
+    local reclassified=false
     if [[ -n "${ROUTE:-}" ]]; then
         route="$ROUTE"
         log "Using pre-specified route: $route"
+        reclassified=true
+    elif [[ "$DRY_RUN" == "true" ]]; then
+        # In dry run mode, use a default route if not specified  
+        route="local_only"
+        log "Dry run mode: using default route: $route"
     else
         route=$(classify_text "$input_text")
         log "Classified route: $route"
@@ -197,16 +545,17 @@ main() {
     # Execute based on route
     case "$route" in
         "send_claude")
-            execute_claude "$input_text"
+            execute_claude "$input_text" "$reclassified"
             ;;
         "plan_then_claude")
-            execute_plan_then_claude "$input_text"
+            execute_plan_then_claude "$input_text" "$reclassified"
             ;;
         "local_only")
-            execute_ollama_with_fallback "$input_text"
+            execute_ollama_with_fallback "$input_text" "$reclassified"
             ;;
         *)
             log "Error: Unknown route: $route"
+            log "  → Valid routes: send_claude, local_only, plan_then_claude"
             exit 1
             ;;
     esac
