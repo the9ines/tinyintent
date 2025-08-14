@@ -10,6 +10,7 @@ IFS=$'\n\t'
 TINYINTENT_BIN="${TINYINTENT_BIN:-/Users/oberfelder/projects/smallintent/router/tinyintent}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:32b-instruct-q4_K_M}"
 CLAUDE_CLI_MODEL="${CLAUDE_CLI_MODEL:-claude-3-sonnet-20240229}"
+LOCAL_MODEL_PREF="${LOCAL_MODEL_PREF:-auto}"
 
 # Global flags
 DRY_RUN=false
@@ -40,10 +41,13 @@ Routes:
                    Example: "brainstorm steps then ask Claude to draft proposal"
 
 Environment Variables:
-  ROUTE           Override automatic route classification
-  OLLAMA_MODEL    Primary Ollama model (default: qwen2.5:32b-instruct-q4_K_M)
+  ROUTE            Override automatic route classification
+  LOCAL_MODEL_PREF Model size preference: 8b|32b|70b|auto (default: auto)
+                   auto: ≤300 tokens→8B, 301-1200→32B, >1200→70B
+                   Keywords bump to 70B: theorem, proof, chain-of-thought, etc.
+  OLLAMA_MODEL     Primary Ollama model (default: qwen2.5:32b-instruct-q4_K_M)
   CLAUDE_CLI_MODEL Claude model (default: claude-3-sonnet-20240229)
-  TINYINTENT_BIN  Path to tinyintent binary
+  TINYINTENT_BIN   Path to tinyintent binary
 EOF
 }
 
@@ -90,6 +94,7 @@ emit_json_log() {
     local privacy_mode="$7"
     local reclassified="$8"
     local phase="${9:-}"
+    local selection_reason="${10:-}"
     
     local timestamp
     if date -u +"%Y-%m-%dT%H:%M:%S.%3NZ" 2>/dev/null | grep -q '%3N'; then
@@ -118,6 +123,10 @@ emit_json_log() {
         json_log+=",\"phase\":\"$phase\""
     fi
     
+    if [[ -n "$selection_reason" ]]; then
+        json_log+=",\"selection_reason\":\"$selection_reason\""
+    fi
+    
     json_log+="}"
     
     if [[ "$JSON_MODE" == "true" ]]; then
@@ -142,6 +151,70 @@ get_model_size() {
         *"claude"*) echo "cloud" ;;
         *) echo "unknown" ;;
     esac
+}
+
+# Function to select local model based on preferences and content
+select_local_model() {
+    local text="$1"
+    local token_count=$(estimate_tokens "$text")
+    
+    # Define model mappings
+    local model_8b="llama3.1:8b-instruct-q5_K_M"
+    local model_32b="qwen2.5:32b-instruct-q4_K_M"
+    local model_70b="llama3.1:70b-instruct-q4_K_M"
+    
+    # Check environment override first
+    case "${LOCAL_MODEL_PREF}" in
+        8b)
+            echo "$model_8b" "env:LOCAL_MODEL_PREF=8b"
+            return
+            ;;
+        32b)
+            echo "$model_32b" "env:LOCAL_MODEL_PREF=32b"
+            return
+            ;;
+        70b)
+            echo "$model_70b" "env:LOCAL_MODEL_PREF=70b"
+            return
+            ;;
+        auto)
+            # Continue to auto selection logic
+            ;;
+        *)
+            # Treat invalid values as auto
+            log "Warning: Invalid LOCAL_MODEL_PREF='${LOCAL_MODEL_PREF}', using auto"
+            ;;
+    esac
+    
+    # Auto selection logic
+    # Check for keywords that bump to 70B
+    local keywords="chain-of-thought|theorem|proof|formal spec|complex plan|optimize algorithm|write compiler|multi-agent orchestration|mathematical proof"
+    if [[ "$text" =~ $keywords ]]; then
+        # Extract the matched keyword for logging
+        local matched_keyword=""
+        if [[ "$text" =~ chain-of-thought ]]; then matched_keyword="chain-of-thought"
+        elif [[ "$text" =~ theorem ]]; then matched_keyword="theorem"
+        elif [[ "$text" =~ proof ]]; then matched_keyword="proof"
+        elif [[ "$text" =~ "formal spec" ]]; then matched_keyword="formal spec"
+        elif [[ "$text" =~ "complex plan" ]]; then matched_keyword="complex plan"
+        elif [[ "$text" =~ "optimize algorithm" ]]; then matched_keyword="optimize algorithm"
+        elif [[ "$text" =~ "write compiler" ]]; then matched_keyword="write compiler"
+        elif [[ "$text" =~ "multi-agent orchestration" ]]; then matched_keyword="multi-agent orchestration"
+        elif [[ "$text" =~ "mathematical proof" ]]; then matched_keyword="mathematical proof"
+        fi
+        
+        echo "$model_70b" "keyword:$matched_keyword"
+        return
+    fi
+    
+    # Token-based selection
+    if [[ $token_count -le 300 ]]; then
+        echo "$model_8b" "length<=${token_count}:8b"
+    elif [[ $token_count -le 1200 ]]; then
+        echo "$model_32b" "length=${token_count}:32b"
+    else
+        echo "$model_70b" "length>${token_count}:70b"
+    fi
 }
 
 # Function to show spinner for network operations
@@ -293,38 +366,139 @@ execute_ollama() {
     fi
 }
 
-# Function to execute Ollama with fallback chain
+# Function to execute Ollama with model selection logging
+execute_ollama_with_selection() {
+    local text="$1"
+    local model="$2"
+    local selection_reason="$3"
+    local reclassified="${4:-false}"
+    local start_time end_time duration_ms
+    
+    log "Routing to Ollama with model: $model"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "Would execute: echo '$text' | ollama run '$model'"
+        log "exec: ollama run $model"  # For test assertions
+        
+        # Emit dry run JSON log
+        local tokens_in=$(estimate_tokens "$text")
+        local tokens_out=50  # Estimated for dry run
+        local model_size=$(get_model_size "$model")
+        
+        # Human-readable feedback to stderr with model_size and reason
+        log "route=local_only model=$model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=0 privacy=local_only reason=$selection_reason"
+        
+        # JSON log to stdout
+        emit_json_log "local_only" "$model" "$model_size" "$tokens_in" "$tokens_out" "0" "local_only" "$reclassified" "" "$selection_reason"
+        
+        return 0
+    fi
+    
+    start_time=$(date +%s%N)
+    
+    # Start ollama in background for spinner
+    local temp_file=$(mktemp)
+    (
+        echo "$text" | ollama run "$model" > "$temp_file" 2>&1
+        echo $? > "$temp_file.exit"
+    ) &
+    local pid=$!
+    
+    # Show spinner for network-bound operation (Ollama can be local or remote)
+    show_spinner "Running Ollama ($model)" "$pid"
+    wait "$pid"
+    
+    end_time=$(date +%s%N)
+    duration_ms=$(( (end_time - start_time) / 1000000 ))
+    
+    local exit_code=$(cat "$temp_file.exit")
+    local output=$(cat "$temp_file")
+    
+    rm -f "$temp_file" "$temp_file.exit"
+    
+    if [[ $exit_code -eq 0 ]]; then
+        local tokens_in=$(estimate_tokens "$text")
+        local tokens_out=$(estimate_tokens "$output")
+        local model_size=$(get_model_size "$model")
+        
+        # Human-readable feedback to stderr with model_size and reason
+        log "route=local_only model=$model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=$duration_ms privacy=local_only reason=$selection_reason"
+        
+        # JSON log to stdout
+        emit_json_log "local_only" "$model" "$model_size" "$tokens_in" "$tokens_out" "$duration_ms" "local_only" "$reclassified" "" "$selection_reason"
+        
+        # Output the response
+        echo "$output"
+        return 0
+    else
+        log "Failed to run Ollama with model: $model"
+        log "  → Error: $output"
+        return 1
+    fi
+}
+
+# Function to execute Ollama with fallback chain using model selector
 execute_ollama_with_fallback() {
     local text="$1"
     local reclassified="${2:-false}"
     
-    # Pass reclassified flag to execute_ollama calls
+    # Use model selector to get the preferred model and reason
+    local model_selection selected_model selection_reason
+    model_selection=$(select_local_model "$text")
+    selected_model=$(echo "$model_selection" | cut -d' ' -f1)
+    selection_reason=$(echo "$model_selection" | cut -d' ' -f2-)
     
-    # Try primary model first
-    if execute_ollama "$text" "$OLLAMA_MODEL" "$reclassified"; then
-        return 0
-    fi
+    # Define fallback order: 70B -> 32B -> 8B
+    local model_70b="llama3.1:70b-instruct-q4_K_M"
+    local model_32b="qwen2.5:32b-instruct-q4_K_M"
+    local model_8b="llama3.1:8b-instruct-q5_K_M"
     
-    # Try fallback model
-    local fallback_model="llama3.1:8b-instruct-q5_K_M"
-    log "Primary model failed, falling back to: $fallback_model"
-    log "  → Reason: Primary model $OLLAMA_MODEL unavailable or failed"
+    local fallback_models=()
+    local current_reason="$selection_reason"
     
-    if execute_ollama "$text" "$fallback_model" "$reclassified"; then
-        return 0
-    fi
+    # Build fallback sequence starting from selected model
+    case "$selected_model" in
+        "$model_70b")
+            fallback_models=("$model_70b" "$model_32b" "$model_8b")
+            ;;
+        "$model_32b")
+            fallback_models=("$model_32b" "$model_8b")
+            ;;
+        "$model_8b")
+            fallback_models=("$model_8b")
+            ;;
+    esac
     
-    # Try smallest fallback
-    local smallest_model="llama3.1:8b-instruct-q5_K_M"
-    if [[ "$fallback_model" != "$smallest_model" ]]; then
-        log "Secondary fallback to: $smallest_model"
-        if execute_ollama "$text" "$smallest_model" "$reclassified"; then
+    # Try each model in the fallback sequence
+    local tried_models=()
+    for model in "${fallback_models[@]}"; do
+        log "Attempting model: $model (reason: $current_reason)"
+        
+        if execute_ollama_with_selection "$text" "$model" "$current_reason" "$reclassified"; then
             return 0
         fi
-    fi
+        
+        tried_models+=("$model")
+        
+        # Update reason for fallback
+        local from_size=$(get_model_size "$model")
+        local next_model=""
+        if [[ "$model" == "$model_70b" ]]; then
+            next_model="$model_32b"
+            current_reason="fallback:70b->32b:load_error"
+        elif [[ "$model" == "$model_32b" ]]; then
+            next_model="$model_8b" 
+            current_reason="fallback:32b->8b:load_error"
+        fi
+        
+        if [[ -n "$next_model" ]]; then
+            log "Model $model failed, falling back to: $next_model"
+            log "  → Reason: Model unavailable or load error"
+        fi
+    done
     
-    log "Error: All Ollama models failed (tried: $OLLAMA_MODEL, $fallback_model)"
-    log "  → Try: ollama pull $OLLAMA_MODEL"
+    log "Error: All Ollama models failed (tried: ${tried_models[*]})"
+    log "  → Try: ollama pull ${fallback_models[0]}"
     log "  → Or: ollama serve (if service is down)"
     exit 2
 }
@@ -410,19 +584,25 @@ execute_plan_then_claude() {
     log "Routing to plan_then_claude: Local refinement → Cloud execution"
     
     if [[ "$DRY_RUN" == "true" ]]; then
-        log "Would execute: echo '$text' | ollama run '$OLLAMA_MODEL' | claude --permission-mode plan --model '$CLAUDE_CLI_MODEL'"
-        log "exec: ollama run $OLLAMA_MODEL"  # For test assertions
+        # Use model selector for local phase
+        local model_selection selected_model selection_reason
+        model_selection=$(select_local_model "$text")
+        selected_model=$(echo "$model_selection" | cut -d' ' -f1)
+        selection_reason=$(echo "$model_selection" | cut -d' ' -f2-)
+        
+        log "Would execute: echo '$text' | ollama run '$selected_model' | claude --permission-mode plan --model '$CLAUDE_CLI_MODEL'"
+        log "exec: ollama run $selected_model"  # For test assertions
         log "exec: claude --permission-mode plan --model $CLAUDE_CLI_MODEL"
         
         # Emit dry run JSON logs for both phases
         local tokens_in=$(estimate_tokens "$text")
         local tokens_out_1=60  # Estimated for phase 1
         local tokens_out_2=100  # Estimated for phase 2
-        local model_size=$(get_model_size "$OLLAMA_MODEL")
+        local model_size=$(get_model_size "$selected_model")
         
         # Phase 1: Local refinement
-        log "Phase 1: tokens_in=$tokens_in tokens_out=$tokens_out_1 latency_ms=0"
-        emit_json_log "plan_then_claude" "$OLLAMA_MODEL" "$model_size" "$tokens_in" "$tokens_out_1" "0" "local_only" "$reclassified" "refine_local"
+        log "Phase 1: model=$selected_model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out_1 latency_ms=0 reason=$selection_reason"
+        emit_json_log "plan_then_claude" "$selected_model" "$model_size" "$tokens_in" "$tokens_out_1" "0" "local_only" "$reclassified" "refine_local" "$selection_reason"
         
         # Phase 2: Cloud execution
         log "route=plan_then_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_out_1 tokens_out=$tokens_out_2 latency_ms=0 privacy=cloud"
@@ -431,18 +611,23 @@ execute_plan_then_claude() {
         return 0
     fi
     
-    # Phase 1: Local refinement with Ollama
-    log "Phase 1: Local refinement with $OLLAMA_MODEL"
+    # Phase 1: Local refinement with selected model
+    local model_selection selected_model selection_reason
+    model_selection=$(select_local_model "$text")
+    selected_model=$(echo "$model_selection" | cut -d' ' -f1)
+    selection_reason=$(echo "$model_selection" | cut -d' ' -f2-)
+    
+    log "Phase 1: Local refinement with $selected_model (reason: $selection_reason)"
     start_time=$(date +%s%N)
     
     local temp_file=$(mktemp)
     (
-        echo "$text" | ollama run "$OLLAMA_MODEL" > "$temp_file" 2>&1
+        echo "$text" | ollama run "$selected_model" > "$temp_file" 2>&1
         echo $? > "$temp_file.exit"
     ) &
     local pid=$!
     
-    show_spinner "Refining locally" "$pid"
+    show_spinner "Refining locally ($selected_model)" "$pid"
     wait "$pid"
     
     end_time=$(date +%s%N)
@@ -463,10 +648,10 @@ execute_plan_then_claude() {
     # Log Phase 1 completion
     local tokens_in_1=$(estimate_tokens "$text")
     local tokens_out_1=$(estimate_tokens "$refined_text")
-    local model_size_1=$(get_model_size "$OLLAMA_MODEL")
+    local model_size_1=$(get_model_size "$selected_model")
     
-    log "Phase 1 complete: tokens_in=$tokens_in_1 tokens_out=$tokens_out_1 latency_ms=$duration_ms"
-    emit_json_log "plan_then_claude" "$OLLAMA_MODEL" "$model_size_1" "$tokens_in_1" "$tokens_out_1" "$duration_ms" "local_only" "$reclassified" "refine_local"
+    log "Phase 1 complete: model=$selected_model model_size=$model_size_1 tokens_in=$tokens_in_1 tokens_out=$tokens_out_1 latency_ms=$duration_ms reason=$selection_reason"
+    emit_json_log "plan_then_claude" "$selected_model" "$model_size_1" "$tokens_in_1" "$tokens_out_1" "$duration_ms" "local_only" "$reclassified" "refine_local" "$selection_reason"
     
     # Phase 2: Cloud execution with Claude
     log "Phase 2: Cloud execution with Claude"

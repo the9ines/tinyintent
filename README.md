@@ -73,6 +73,13 @@ agent/neuro_agent --dry-run "test input"
 
 # Override route classification
 ROUTE=local_only agent/neuro_agent "force local processing"
+
+# Model size preference (8b/32b/70b/auto)
+LOCAL_MODEL_PREF=70b agent/neuro_agent "complex mathematical proof"
+LOCAL_MODEL_PREF=8b agent/neuro_agent "quick summary"
+
+# Auto selection (default): ≤300 tokens→8B, 301-1200→32B, >1200→70B
+# Keywords like "theorem", "proof", "chain-of-thought" bump to 70B
 ```
 
 ### iPhone Shortcut Integration

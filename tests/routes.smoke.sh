@@ -159,6 +159,57 @@ else
     log_fail "Model size extraction failed. Expected 32B, got: $(jq -r '.model_size' "$JSON_LOG")"
 fi
 
+# Test 11: LOCAL_MODEL_PREF=8b forces 8B model
+log_test "LOCAL_MODEL_PREF=8b forces 8B model"
+echo "test 8b preference" | LOCAL_MODEL_PREF=8b ROUTE="local_only" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+
+if jq -e '.model_name == "llama3.1:8b-instruct-q5_K_M" and .model_size == "8B" and .selection_reason == "env:LOCAL_MODEL_PREF=8b"' "$JSON_LOG" >/dev/null && grep -q "model_size=8B.*reason=env:LOCAL_MODEL_PREF=8b" "$TEST_LOG"; then
+    log_pass "8B model preference enforced correctly"
+else
+    log_fail "8B model preference failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
+fi
+
+# Test 12: LOCAL_MODEL_PREF=32b forces 32B model
+log_test "LOCAL_MODEL_PREF=32b forces 32B model"
+echo "test 32b preference" | LOCAL_MODEL_PREF=32b ROUTE="local_only" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+
+if jq -e '.model_name == "qwen2.5:32b-instruct-q4_K_M" and .model_size == "32B" and .selection_reason == "env:LOCAL_MODEL_PREF=32b"' "$JSON_LOG" >/dev/null && grep -q "model_size=32B.*reason=env:LOCAL_MODEL_PREF=32b" "$TEST_LOG"; then
+    log_pass "32B model preference enforced correctly"
+else
+    log_fail "32B model preference failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
+fi
+
+# Test 13: LOCAL_MODEL_PREF=70b forces 70B model
+log_test "LOCAL_MODEL_PREF=70b forces 70B model"
+echo "test 70b preference" | LOCAL_MODEL_PREF=70b ROUTE="local_only" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+
+if jq -e '.model_name == "llama3.1:70b-instruct-q4_K_M" and .model_size == "70B" and .selection_reason == "env:LOCAL_MODEL_PREF=70b"' "$JSON_LOG" >/dev/null && grep -q "model_size=70B.*reason=env:LOCAL_MODEL_PREF=70b" "$TEST_LOG"; then
+    log_pass "70B model preference enforced correctly"
+else
+    log_fail "70B model preference failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
+fi
+
+# Test 14: Keyword detection bumps to 70B
+log_test "Keyword detection bumps to 70B model"
+echo "Please prove this mathematical theorem using formal logic" | ROUTE="local_only" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+
+if jq -e '.model_name == "llama3.1:70b-instruct-q4_K_M" and .model_size == "70B" and (.selection_reason | test("keyword:"))' "$JSON_LOG" >/dev/null && grep -q "model_size=70B.*reason=keyword:" "$TEST_LOG"; then
+    log_pass "Keyword detection correctly selects 70B model"
+else
+    log_fail "Keyword detection failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
+fi
+
+# Test 15: Plan_then_claude uses model selector for local phase
+log_test "Plan_then_claude uses model selector for local phase"
+echo "short prompt for planning" | LOCAL_MODEL_PREF=8b ROUTE="plan_then_claude" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+
+# Should produce two JSON lines with 8B for refine_local phase
+if jq -e 'select(.phase == "refine_local") | .model_name == "llama3.1:8b-instruct-q5_K_M" and .model_size == "8B" and .selection_reason == "env:LOCAL_MODEL_PREF=8b"' "$JSON_LOG" >/dev/null && grep -q "model=llama3.1:8b-instruct-q5_K_M.*model_size=8B.*reason=env:LOCAL_MODEL_PREF=8b" "$TEST_LOG"; then
+    log_pass "Plan_then_claude correctly uses model selector for local phase"
+else
+    log_fail "Plan_then_claude model selector failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
+fi
+
 # Cleanup
 rm -f "$TEST_LOG" "$JSON_LOG"
 
