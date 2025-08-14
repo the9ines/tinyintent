@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+bridge/.venv/
+
+# Logs & runtime
+bridge/logs/
+*.log
+
+# Swift build artifacts
+router/.build/
+router/tinyintent        # compiled binary
+
+# Core ML compiled bundles
+*.mlmodelc/
+
+# Model artifacts (do NOT commit trained models)
+router/TinyIntent.mlmodel
+router/TinyIntent.mlpackage
+router/TinyIntent_iOS.mlmodel
+router/TinyIntent_iOS.mlpackage
+
+# Secrets / local config
+launchd/com.tinyintent.tinyrpc.plist
+
+# Editor junk
+.vscode/
+.idea/

@@ -1,0 +1,7 @@
+torch>=2.3
+transformers>=4.41
+coremltools>=7.0
+scikit-learn>=1.5
+numpy>=1.26
+pandas>=2.2
+accelerate>=0.26.0

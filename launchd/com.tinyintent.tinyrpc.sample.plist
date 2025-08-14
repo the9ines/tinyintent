@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copy to com.tinyintent.tinyrpc.plist and replace CHANGE_ME_SECRET before use. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>ALLOW_LAN</key>
+		<string>0</string>
+		<key>DOUBLE_CHECK</key>
+		<string>1</string>
+		<key>FORCE_IPHONE</key>
+		<string>0</string>
+		<key>LOG_PATH</key>
+		<string>/Users/oberfelder/projects/smallintent/bridge/logs/tinyrpc.log</string>
+		<key>NEURO_AGENT</key>
+		<string>/Users/oberfelder/projects/smallintent/agent/neuro_agent</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>TINYINTENT_BIN</key>
+		<string>/Users/oberfelder/projects/smallintent/router/tinyintent</string>
+		<key>TINYINTENT_BIND</key>
+		<string>127.0.0.1</string>
+		<key>TINYINTENT_DRYRUN</key>
+		<string>1</string>
+		<key>TINYINTENT_PORT</key>
+		<string>8787</string>
+		<key>TINYINTENT_SECRET</key>
+		<string>CHANGE_ME_SECRET</string>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>com.tinyintent.tinyrpc</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/oberfelder/projects/smallintent/bridge/.venv/bin/python3</string>
+		<string>/Users/oberfelder/projects/smallintent/bridge/tinyrpc.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/oberfelder/projects/smallintent/bridge/logs/stderr.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/oberfelder/projects/smallintent/bridge/logs/stdout.log</string>
+	<key>WorkingDirectory</key>
+	<string>/Users/oberfelder/projects/smallintent/</string>
+</dict>
+</plist>

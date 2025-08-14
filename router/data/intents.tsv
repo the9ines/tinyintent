@@ -1,0 +1,65 @@
+Write a comprehensive analysis of quantum computing's impact on cryptography including mathematical proofs	send_claude
+Analyze the economic implications of climate change on global supply chains over the next 20 years	send_claude
+Research the latest developments in CRISPR gene editing technology and its ethical considerations	send_claude
+Compare the effectiveness of different machine learning algorithms for time series forecasting	send_claude
+Investigate the relationship between social media usage and mental health in teenagers	send_claude
+Create a detailed business plan for a sustainable fashion startup with market analysis	send_claude
+Explain the biochemical pathways involved in cellular respiration with molecular diagrams	send_claude
+Analyze Shakespeare's use of metaphor in Hamlet and its impact on modern literature	send_claude
+Research renewable energy policies across different countries and their effectiveness	send_claude
+Write a technical paper on distributed systems consensus algorithms	send_claude
+Investigate the historical causes of World War I and their modern parallels	send_claude
+Analyze consumer behavior patterns in e-commerce during economic downturns	send_claude
+Compare different programming paradigms and their applications in modern software development	send_claude
+Research the impact of artificial intelligence on job displacement in various industries	send_claude
+Create a comprehensive guide to sustainable urban planning practices	send_claude
+Analyze the effectiveness of different teaching methodologies in STEM education	send_claude
+Investigate the role of microbiomes in human health and disease prevention	send_claude
+Write a detailed report on cybersecurity threats facing financial institutions	send_claude
+Research the evolution of human language and its cognitive implications	send_claude
+Analyze the geopolitical implications of rare earth mineral distribution	send_claude
+I need help organizing my work	plan_then_claude
+Help me improve my productivity	plan_then_claude
+I want to build something but not sure what	plan_then_claude
+Can you help me plan my day	plan_then_claude
+I need to solve a complex problem at work	plan_then_claude
+Help me create a better system for managing tasks	plan_then_claude
+I want to learn something new but don't know where to start	plan_then_claude
+How can I optimize my workflow	plan_then_claude
+I need to make some important decisions	plan_then_claude
+Help me structure my thoughts on a project	plan_then_claude
+I want to improve my skills but need guidance	plan_then_claude
+Can you help me break down this large task	plan_then_claude
+I need to prioritize my goals	plan_then_claude
+Help me design a better approach to problem-solving	plan_then_claude
+I want to create a learning plan	plan_then_claude
+How should I approach this complex situation	plan_then_claude
+I need help organizing my ideas	plan_then_claude
+Can you help me think through this challenge	plan_then_claude
+I want to build better habits	plan_then_claude
+Help me create a strategy for improvement	plan_then_claude
+Fix the typo in this sentence: The qick brown fox jumps	local_only
+Summarize this email in two sentences	local_only
+Convert this text to uppercase	local_only
+Count the words in this paragraph	local_only
+Remove duplicate lines from this list	local_only
+Find all occurrences of the word 'data' in this file	local_only
+Rewrite this sentence to be more concise	local_only
+Check if this email address format is valid	local_only
+Sort these names alphabetically	local_only
+Extract phone numbers from this text	local_only
+Replace all instances of 'old_term' with 'new_term'	local_only
+Convert this date format from MM/DD/YYYY to DD/MM/YYYY	local_only
+Count how many times each word appears in this text	local_only
+Remove all punctuation from this sentence	local_only
+Find the longest word in this paragraph	local_only
+Capitalize the first letter of each word	local_only
+Check if this password meets basic requirements	local_only
+Format this JSON to be more readable	local_only
+Extract URLs from this text block	local_only
+Convert tabs to spaces in this code snippet	local_only
+What's the regex pattern to match email addresses	local_only
+How do I reverse a string in Python	local_only
+Show me the git command to undo the last commit	local_only
+What's the difference between let and const in JavaScript	local_only
+How do I check disk usage on Linux	local_only
