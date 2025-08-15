@@ -25,7 +25,7 @@
 
 ## 0) Header & Quick Facts
 
-- **Project**: TinyIntent
+- **Project**: TinyIntent (M4.1 Complete)
 - **Root**: `/Users/oberfelder/projects/smallintent/`
 - **Router model (MLProgram)**: `router/TinyIntent.mlpackage` *(or legacy `router/TinyIntent.mlmodel`)*
 - **iOS copy**: `router/TinyIntent_iOS.mlpackage`
@@ -36,7 +36,7 @@
 - **Labels (fixed)**: `send_claude`, `plan_then_claude`, `local_only`
 - **Size budget**: **< 5 MB** package size
 - **ANE config**: **`.cpuAndNeuralEngine`** everywhere
-- **Current status**: **M1/M2 done; M3 in progress (bridge)**
+- **Current status**: **M1/M2/M3/M4/M4.1 complete** — production-ready with 70B selector and Tailscale
 
 ## 1) Canonical File Tree (what should exist)
 
@@ -79,7 +79,13 @@ smallintent/
 - **Agent**:
   - `neuro_agent` honors `ROUTE` env (skip classify).
   - `--dry-run` **skips** dependency checks and prints planned commands.
-  - Fallback order: `qwen2.5:32b-instruct-q4_K_M` → `llama3.1:8b-instruct-q5_K_M` → exit 2.
+  - **M4.1 Local Model Selector**:
+    - **8B**: `llama3.1:8b-instruct-q5_K_M` (≤300 tokens)
+    - **32B**: `qwen2.5:32b-instruct-q4_K_M` (301-1200 tokens, default)
+    - **70B**: `llama3.1:70b-instruct-q4_K_M` (>1200 tokens OR keywords)
+  - **Keywords**: `["chain-of-thought","theorem","proof","formal spec","complex plan","optimize algorithm","write compiler","multi-agent orchestration","mathematical proof"]`
+  - **Environment**: `LOCAL_MODEL_PREF=8b|32b|70b|auto` (default: `auto`)
+  - **Fallback**: 70B → 32B → 8B (if unavailable)
 - **Bridge** (`tinyrpc.py`):
   - Default bind `127.0.0.1`; LAN only if `ALLOW_LAN=1` and `TINYINTENT_BIND=0.0.0.0`.
   - Require `X-TinyIntent-Secret` (non-empty, not placeholder).
@@ -87,6 +93,10 @@ smallintent/
   - Pass `ROUTE=<label>` and `TEXT_SOURCE=iphone` to `neuro_agent`.
   - Optional `DOUBLE_CHECK=1` reclassifies on Mac and may override unless `FORCE_IPHONE=1`.
   - One compact log line per request to stderr + `bridge/logs/tinyrpc.log`.
+  - **M4.1 Hardening**:
+    - `TAILSCALE_ONLY=1` restricts to 100.64.0.0/10 IPs
+    - `RATE_LIMIT_RPS=3` token bucket per IP (429 on exceed)
+    - `MAX_BODY_KB=32` request size validation (413 on exceed)
 - **Never** reintroduce: TF-IDF, `.pkl`, Create ML classifiers, network calls in local-only paths, or model files outside `router/`.
 
 ## 3) PRD Reference (must link & embed)
@@ -128,6 +138,45 @@ make ios-model
 du -sh router/TinyIntent_iOS.mlpackage
 ```
 
+**M4.1 model selector testing**
+```bash
+# Test 8B selection (short input)
+echo "short" | LOCAL_MODEL_PREF=auto agent/neuro_agent --dry-run --json
+
+# Test 32B selection (medium input)
+medium_text=$(printf "This is medium length text that should trigger 32B. %.0s" {1..50})
+echo "$medium_text" | agent/neuro_agent --dry-run --json
+
+# Test 70B keyword detection
+echo "Please prove this mathematical theorem using formal logic" | agent/neuro_agent --dry-run --json
+
+# Test environment override
+echo "simple task" | LOCAL_MODEL_PREF=70b agent/neuro_agent --dry-run --json
+
+# Test plan_then_claude with model selector
+echo "short prompt" | LOCAL_MODEL_PREF=8b ROUTE=plan_then_claude agent/neuro_agent --dry-run --json
+```
+
+**M4.1 bridge hardening verification**
+```bash
+# Setup secret
+SECRET=$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_SECRET" launchd/com.tinyintent.tinyrpc.plist)
+
+# Rate limiting test (requires running bridge)
+for i in {1..5}; do
+  curl -s -w "HTTP_STATUS:%{http_code}" -X POST http://127.0.0.1:8787/route \
+    -H "Content-Type: application/json" -H "X-TinyIntent-Secret: $SECRET" \
+    -d '{"text":"test rate limit","route":"local_only"}'
+  echo
+done
+
+# Size limit test
+large_text=$(printf "A%.0s" {1..35000})
+curl -s -w "HTTP_STATUS:%{http_code}" -X POST http://127.0.0.1:8787/route \
+  -H "Content-Type: application/json" -H "X-TinyIntent-Secret: $SECRET" \
+  -d "{\"text\":\"$large_text\",\"route\":\"local_only\"}"
+```
+
 ## 5) Troubleshooting Quick Refs
 
 * **401 unauthorized**: Shortcut secret ≠ plist secret. Read with PlistBuddy and paste into Shortcut header.
@@ -135,6 +184,11 @@ du -sh router/TinyIntent_iOS.mlpackage
 * **Runner says "expects tokenized tensors"**: That's OK for v1 (iPhone does classification). Set `ROUTE` in env or send via bridge.
 * **Model too big (>5 MB)**: 8-bit quantization didn't apply. Re-run M1 INT8 exporter mini-prompt below.
 * **Empty 43-byte files**: Accidentally saved `.mlmodel` placeholder. Use MLProgram `.mlpackage` path and include size gate.
+* **70B not selected**: Check `LOCAL_MODEL_PREF` and keywords. Use `--json` to see `selection_reason`.
+* **Bridge 429 rate limited**: Exceeded `RATE_LIMIT_RPS`. Wait or increase limit.
+* **Bridge 403 Tailscale required**: Non-Tailscale IP with `TAILSCALE_ONLY=1`. Use Tailscale or disable.
+* **Bridge 413 payload too large**: Exceeds `MAX_BODY_KB`. Reduce size or increase limit.
+* **Model fallback loop**: All models unavailable. Check `ollama list` and `ollama serve`.
 
 ## 6) Ready-to-Paste Mini-Prompts (for future tasks)
 
@@ -186,6 +240,31 @@ Honor ROUTE env to bypass local classify.
 All plans and decisions log as a single compact stderr line.
 ```
 
+### E) **M4.1 model selector verification**
+
+```
+Verify neuro_agent M4.1 model selector:
+- Three models with exact IDs: llama3.1:8b-instruct-q5_K_M, qwen2.5:32b-instruct-q4_K_M, llama3.1:70b-instruct-q4_K_M
+- Auto thresholds: ≤300→90B, 301-1200↓32B, >1200↓70B
+- Keywords bump to 70B: "theorem", "proof", "chain-of-thought", etc.
+- Environment LOCAL_MODEL_PREF=8b|32b|70b|auto overrides
+- Fallback chain: 70B→32B→8B if unavailable
+- JSON includes selection_reason field
+- Human stderr includes model_size and reason
+- Applies to local_only and plan_then_claude local phase
+```
+
+### F) **M4.1 bridge hardening verification**
+
+```
+Verify tinyrpc.py M4.1 hardening:
+- RATE_LIMIT_RPS token bucket per IP, returns 429 when exceeded
+- TAILSCALE_ONLY=1 checks 100.64.0.0/10 range, returns 403 if violated
+- MAX_BODY_KB validates request size, returns 413 if exceeded
+- Enhanced logging with remote_addr, tailscale boolean, body_size_kb
+- Never log raw prompt text, only length/hash
+```
+
 ## 7) Acceptance Checklists (what "done" looks like)
 
 **M1**
@@ -202,9 +281,19 @@ All plans and decisions log as a single compact stderr line.
 * Logs show: `[tinyrpc] ip=... len=... route=... dry=1 status=ok`.
 * Shortcut posts `{text, route}` and gets `ok:true`.
 
+**M4/M4.1**
+* Model selector chooses correct 8B/32B/70B based on content and `LOCAL_MODEL_PREF`
+* Keywords ("theorem", "proof", etc.) correctly bump to 70B
+* `--json` outputs structured logs with `selection_reason` field
+* Bridge returns proper HTTP codes: 401/403/413/429 for security violations
+* Tailscale IP detection works for 100.64.0.0/10 range
+* Rate limiting activates after exceeding `RATE_LIMIT_RPS`
+* Enhanced logging includes remote context (remote_addr, tailscale, body_size_kb)
+* Plan_then_claude uses model selector for local phase, Claude for cloud final
+
 ---
 
-## Appendix A — Embedded PRD v1.5
+## Appendix A — Embedded PRD v1.6
 
 # TinyIntent — Updated PRD (v1.5 + iPhone→Mac Flow)
 
