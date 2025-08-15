@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, feat/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install bridge dependencies
+      run: |
+        pip install -r bridge/requirements_bridge.txt
+    
+    - name: Run smoke tests
+      run: |
+        export SMOKE_MODE=ci
+        bash tests/health.sh
+    
+    - name: Run auth tests
+      run: |
+        export SMOKE_MODE=ci
+        bash tests/auth.sh

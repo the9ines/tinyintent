@@ -4,6 +4,7 @@ from typing import Dict, Any
 from flask import Flask, request, jsonify
 from collections import defaultdict
 import re
+from bridge.resolve import resolve_ollama_path
 
 # Router v2 labels
 ROUTER_V2_LABELS = {"gen", "act"}
@@ -26,6 +27,9 @@ LOG_PATH = os.getenv("LOG_PATH", "/Users/oberfelder/projects/smallintent/bridge/
 TAILSCALE_ONLY = os.getenv("TAILSCALE_ONLY", "0") == "1"
 RATE_LIMIT_RPS = float(os.getenv("RATE_LIMIT_RPS", "3"))
 MAX_BODY_KB = int(os.getenv("MAX_BODY_KB", "32"))
+
+# M10.4 auth environment variables
+ALLOW_DEV_LOCAL = os.getenv("ALLOW_DEV_LOCAL", "0") == "1"
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_BODY_KB * 1024
@@ -62,6 +66,14 @@ def is_tailscale_ip(ip: str) -> bool:
         ip_obj = ipaddress.ip_address(ip)
         tailscale_net = ipaddress.ip_network("100.64.0.0/10")
         return ip_obj in tailscale_net
+    except ValueError:
+        return False
+
+def is_localhost_ip(ip: str) -> bool:
+    """Check if IP is localhost (127.0.0.1 or ::1)"""
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+        return ip_obj.is_loopback
     except ValueError:
         return False
 
@@ -176,9 +188,13 @@ def router_ok():
 
 def ollama_ok():
     """Check if ollama is available"""
+    ollama_path, _ = resolve_ollama_path()
+    if not ollama_path:
+        return False
+    
     try:
         proc = subprocess.run(
-            ["ollama", "--version"],
+            [ollama_path, "--version"],
             capture_output=True,
             timeout=3
         )
@@ -233,8 +249,129 @@ def readyz():
     
     return jsonify(response), 200 if ready else 503
 
+@app.get("/debug/authz")
+def debug_authz():
+    remote_addr = request.remote_addr or "unknown"
+    
+    # Only allow localhost
+    if not is_localhost_ip(remote_addr):
+        return jsonify({"error": "forbidden"}), 403
+    
+    # Get secret from environment
+    secret = os.getenv("TINYINTENT_SECRET", "").strip()
+    
+    # Get header (case-insensitive) and trim whitespace
+    header_value = ""
+    for key, value in request.headers:
+        if key.lower() == "x-tinyintent-secret":
+            header_value = value.strip()
+            break
+    
+    has_header = bool(header_value)
+    header_len = len(header_value)
+    secret_configured = bool(secret)
+    expected_len = len(secret) if secret_configured else None
+    
+    # Determine if request would be allowed and reason
+    would_allow = False
+    reason = ""
+    
+    if not secret_configured:
+        reason = "secret_not_configured"
+    elif ALLOW_DEV_LOCAL and is_localhost_ip(remote_addr) and not header_value:
+        would_allow = True
+        reason = "dev_bypass"
+    elif not header_value:
+        reason = "missing_header"
+    elif header_value != secret:
+        reason = "mismatch"
+    else:
+        would_allow = True
+        reason = "secret_ok"
+    
+    return jsonify({
+        "client_ip": remote_addr,
+        "has_header": has_header,
+        "header_len": header_len,
+        "secret_configured": secret_configured,
+        "expected_len": expected_len,
+        "allow_dev_local": ALLOW_DEV_LOCAL,
+        "would_allow": would_allow,
+        "reason": reason
+    })
+
+def check_auth(remote_addr: str) -> tuple[bool, str, str]:
+    """
+    Check authentication for the request.
+    Returns (allowed, reason, auth_mode)
+    """
+    # Get secret from environment on each request (no caching)
+    secret = os.getenv("TINYINTENT_SECRET", "").strip()
+    
+    # Get header (case-insensitive) and trim whitespace
+    header_value = ""
+    for key, value in request.headers:
+        if key.lower() == "x-tinyintent-secret":
+            header_value = value.strip()
+            break
+    
+    # Check if secret is configured
+    if not secret:
+        return False, "secret_not_configured", ""
+    
+    # Check for dev bypass (localhost only)
+    if ALLOW_DEV_LOCAL and is_localhost_ip(remote_addr):
+        if not header_value:  # No header provided, but dev bypass allows it
+            return True, "dev_bypass", "dev_bypass"
+    
+    # Check if header is missing/empty
+    if not header_value:
+        return False, "missing_header", ""
+    
+    # Check if header matches secret
+    if header_value != secret:
+        return False, "mismatch", ""
+    
+    # Success with secret
+    return True, "secret_ok", "secret"
+
 @app.before_request
 def validate_request():
+    # Skip auth for health endpoints
+    if request.path in ["/healthz", "/readyz"]:
+        return None
+    
+    # Auth check for all other endpoints
+    remote_addr = request.remote_addr or "unknown"
+    allowed, reason, auth_mode = check_auth(remote_addr)
+    
+    if not allowed:
+        log_line(f"allowed=false reason={reason}")
+        
+        if reason == "secret_not_configured":
+            return jsonify({"error": "unauthorized", "code": "secret_not_configured"}), 401
+        elif reason == "mismatch":
+            # Get lengths for detail
+            secret = os.getenv("TINYINTENT_SECRET", "").strip()
+            header_value = ""
+            for key, value in request.headers:
+                if key.lower() == "x-tinyintent-secret":
+                    header_value = value.strip()
+                    break
+            
+            return jsonify({
+                "error": "unauthorized",
+                "code": "mismatch", 
+                "detail": {
+                    "provided_len": len(header_value),
+                    "expected_len": len(secret)
+                }
+            }), 401
+        else:  # missing_header
+            return jsonify({"error": "unauthorized", "code": "missing_header"}), 401
+    else:
+        log_line(f"allowed=true auth_mode={auth_mode}")
+    
     # Content-Type validation
     if request.method == "POST" and request.content_type != "application/json":
         return error(415, "Content-Type must be application/json")
@@ -247,12 +384,6 @@ def validate_request():
 def route():
     remote_addr = request.remote_addr or "unknown"
     tailscale = is_tailscale_ip(remote_addr)
-    
-    # Auth check
-    hdr = request.headers.get("X-TinyIntent-Secret", "")
-    if not SECRET or hdr != SECRET:
-        log_line(f"remote_addr={remote_addr} tailscale={tailscale} allowed=false status=err msg=unauthorized")
-        return error(401, "unauthorized")
     
     # Tailscale-only check
     if TAILSCALE_ONLY and not tailscale:
@@ -338,6 +469,19 @@ def route():
         except Exception as e:
             log_line(f"double_check exception: {e}")
 
+    # Resolve ollama path before calling agent
+    ollama_path, tried_paths = resolve_ollama_path()
+    log_line(f"deps.ollama_path={ollama_path or 'none'} tried={len(tried_paths)}")
+    
+    if not ollama_path:
+        return jsonify({
+            "error": "missing_dependency",
+            "dep": "ollama", 
+            "code": "not_found",
+            "tried": tried_paths,
+            "hint": "Set OLLAMA_BIN to the full path or update PATH in launchd plist."
+        }), 500
+
     # Build agent command
     args = [AGENT]
     if DRY:
@@ -352,6 +496,7 @@ def route():
     env["REMOTE_ADDR"] = remote_addr
     env["TAILSCALE"] = "true" if tailscale else "false"
     env["BODY_SIZE_KB"] = str(int(body_size_kb))
+    env["OLLAMA_BIN"] = ollama_path
 
     # Call agent with route and text
     try:

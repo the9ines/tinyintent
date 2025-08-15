@@ -158,6 +158,35 @@ get_model_size() {
     esac
 }
 
+# Function to resolve ollama path using Python resolver
+resolve_ollama() {
+    # First check if OLLAMA_BIN is set
+    if [[ -n "${OLLAMA_BIN:-}" ]] && [[ -x "$OLLAMA_BIN" ]]; then
+        echo "$OLLAMA_BIN"
+        return 0
+    fi
+    
+    # Fallback to Python resolver
+    local bridge_dir="$(dirname "$0")/../bridge"
+    if [[ -f "$bridge_dir/resolve.py" ]]; then
+        python3 -c "
+import sys
+sys.path.insert(0, '$bridge_dir')
+from resolve import resolve_ollama_path
+path, tried = resolve_ollama_path()
+if path:
+    print(path)
+    sys.exit(0)
+else:
+    print('NOT_FOUND', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null || echo ""
+    else
+        # Final fallback - try which
+        which ollama 2>/dev/null || echo ""
+    fi
+}
+
 # Function to select local model based on preferences and content
 select_local_model() {
     local text="$1"
@@ -246,11 +275,16 @@ check_dependencies() {
     local missing_deps=()
     local error_messages=()
     
-    if ! command -v ollama >/dev/null 2>&1; then
+    # Resolve ollama path
+    local ollama_cmd
+    ollama_cmd=$(resolve_ollama)
+    
+    if [[ -z "$ollama_cmd" ]]; then
         missing_deps+=("ollama")
         error_messages+=("Missing ollama CLI tool. Install via: brew install ollama")
-    elif ! ollama list >/dev/null 2>&1; then
-        error_messages+=("Ollama service unavailable. Start with: ollama serve")
+        error_messages+=("Or set OLLAMA_BIN environment variable to the full path")
+    elif ! "$ollama_cmd" list >/dev/null 2>&1; then
+        error_messages+=("Ollama service unavailable. Start with: $ollama_cmd serve")
         exit 2
     fi
     
@@ -263,10 +297,10 @@ check_dependencies() {
         exit 1
     fi
     
-    # Check if models are available
-    if ! ollama list | grep -q "$OLLAMA_MODEL" >/dev/null 2>&1; then
+    # Check if models are available (only if ollama is found)
+    if [[ -n "$ollama_cmd" ]] && ! "$ollama_cmd" list | grep -q "$OLLAMA_MODEL" >/dev/null 2>&1; then
         log "Warning: Primary model $OLLAMA_MODEL not found. Will attempt fallback."
-        log "  → To install: ollama pull $OLLAMA_MODEL"
+        log "  → To install: $ollama_cmd pull $OLLAMA_MODEL"
     fi
 }
 
@@ -304,10 +338,19 @@ execute_ollama() {
     local reclassified="${3:-false}"
     local start_time end_time duration_ms
     
+    # Resolve ollama command
+    local ollama_cmd
+    ollama_cmd=$(resolve_ollama)
+    
+    if [[ -z "$ollama_cmd" ]]; then
+        log "Error: ollama command not found"
+        return 1
+    fi
+    
     log "Routing to Ollama with model: $model"
     
     if [[ "$DRY_RUN" == "true" ]]; then
-        log "Would execute: echo '$text' | ollama run '$model'"
+        log "Would execute: echo '$text' | $ollama_cmd run '$model'"
         log "exec: ollama run $model"  # For test assertions
         
         # Emit dry run JSON log
@@ -329,7 +372,7 @@ execute_ollama() {
     # Start ollama in background for spinner
     local temp_file=$(mktemp)
     (
-        echo "$text" | ollama run "$model" > "$temp_file" 2>&1
+        echo "$text" | "$ollama_cmd" run "$model" > "$temp_file" 2>&1
         echo $? > "$temp_file.exit"
     ) &
     local pid=$!
@@ -375,10 +418,19 @@ execute_ollama_with_selection() {
     local reclassified="${4:-false}"
     local start_time end_time duration_ms
     
+    # Resolve ollama command
+    local ollama_cmd
+    ollama_cmd=$(resolve_ollama)
+    
+    if [[ -z "$ollama_cmd" ]]; then
+        log "Error: ollama command not found"
+        return 1
+    fi
+    
     log "Routing to Ollama with model: $model"
     
     if [[ "$DRY_RUN" == "true" ]]; then
-        log "Would execute: echo '$text' | ollama run '$model'"
+        log "Would execute: echo '$text' | $ollama_cmd run '$model'"
         log "exec: ollama run $model"  # For test assertions
         
         # Emit dry run JSON log
@@ -401,7 +453,7 @@ execute_ollama_with_selection() {
     # Start ollama in background for spinner
     local temp_file=$(mktemp)
     (
-        echo "$text" | ollama run "$model" > "$temp_file" 2>&1
+        echo "$text" | "$ollama_cmd" run "$model" > "$temp_file" 2>&1
         echo $? > "$temp_file.exit"
     ) &
     local pid=$!
@@ -444,6 +496,15 @@ execute_ollama_with_selection() {
 execute_ollama_with_fallback() {
     local text="$1"
     local reclassified="${2:-false}"
+    
+    # Resolve ollama command
+    local ollama_cmd
+    ollama_cmd=$(resolve_ollama)
+    
+    if [[ -z "$ollama_cmd" ]]; then
+        log "Error: ollama command not found"
+        return 1
+    fi
     
     # Use model selector to get the preferred model and reason
     local model_selection selected_model selection_reason
@@ -501,8 +562,8 @@ execute_ollama_with_fallback() {
     done
     
     log "Error: All Ollama models failed (tried: ${tried_models[*]})"
-    log "  → Try: ollama pull ${fallback_models[0]}"
-    log "  → Or: ollama serve (if service is down)"
+    log "  → Try: $ollama_cmd pull ${fallback_models[0]}"
+    log "  → Or: $ollama_cmd serve (if service is down)"
     exit 2
 }
 
@@ -512,6 +573,15 @@ execute_plan_then_local() {
     local text="$1"
     local reclassified="${2:-false}"
     local start_time end_time duration_ms
+    
+    # Resolve ollama command
+    local ollama_cmd
+    ollama_cmd=$(resolve_ollama)
+    
+    if [[ -z "$ollama_cmd" ]]; then
+        log "Error: ollama command not found"
+        return 1
+    fi
     
     log "Routing to plan_then_local: Local refinement → Local execution with larger model"
     
@@ -525,7 +595,7 @@ execute_plan_then_local() {
         # For plan_then_local, we use 70B for final execution
         local final_model="llama3.1:70b-instruct-q4_K_M"
         
-        log "Would execute: echo '$text' | ollama run '$selected_model' | ollama run '$final_model'"
+        log "Would execute: echo '$text' | $ollama_cmd run '$selected_model' | $ollama_cmd run '$final_model'"
         log "exec: ollama run $selected_model"  # For test assertions
         log "exec: ollama run $final_model"
         
@@ -560,7 +630,7 @@ execute_plan_then_local() {
     
     local temp_file=$(mktemp)
     (
-        echo "$text" | ollama run "$selected_model" > "$temp_file" 2>&1
+        echo "$text" | "$ollama_cmd" run "$selected_model" > "$temp_file" 2>&1
         echo $? > "$temp_file.exit"
     ) &
     local pid=$!
@@ -599,7 +669,7 @@ execute_plan_then_local() {
     
     temp_file=$(mktemp)
     (
-        echo "$refined_text" | ollama run "$final_model" > "$temp_file" 2>&1
+        echo "$refined_text" | "$ollama_cmd" run "$final_model" > "$temp_file" 2>&1
         echo $? > "$temp_file.exit"
     ) &
     pid=$!

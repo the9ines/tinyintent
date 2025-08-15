@@ -17,6 +17,8 @@
 		<string>/Users/oberfelder/projects/smallintent/agent/neuro_agent</string>
 		<key>PATH</key>
 		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<!-- Set OLLAMA_BIN if launchd PATH can't see ollama -->
+		<!-- <key>OLLAMA_BIN</key><string>/opt/homebrew/bin/ollama</string> -->
 		<key>TINYINTENT_BIN</key>
 		<string>/Users/oberfelder/projects/smallintent/router/tinyintent</string>
 		<key>TINYINTENT_BIND</key>

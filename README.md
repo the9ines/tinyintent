@@ -133,6 +133,55 @@ curl http://127.0.0.1:8787/readyz | jq .
 
 The readiness endpoint checks environment variables, router binary availability, and Ollama presence. Useful for deployment automation and CI/CD pipelines.
 
+## Authentication
+
+The bridge service requires authentication via the `X-TinyIntent-Secret` header:
+
+```bash
+# All requests to /route must include the secret header
+curl -H "X-TinyIntent-Secret: your-secret-here" \
+     -H "Content-Type: application/json" \
+     -d '{"text":"test message","route":"local_only"}' \
+     http://127.0.0.1:8787/route
+```
+
+**Secret Management:**
+- Rotate secrets with: `bash scripts/rotate_secret.sh`
+- Secrets are stored in `launchd/com.tinyintent.tinyrpc.plist`
+- Use PlistBuddy to view: `/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_SECRET" launchd/com.tinyintent.tinyrpc.plist`
+
+**Development Mode** (localhost only):
+```bash
+# Enable dev bypass for localhost requests without auth (default: off)
+export ALLOW_DEV_LOCAL=1
+```
+
+When `ALLOW_DEV_LOCAL=1`, requests from 127.0.0.1 or ::1 bypass authentication. This setting only applies to localhost and never affects remote connections.
+
+## If you see 'missing_dependency: ollama'
+
+The bridge service requires `ollama` to be accessible. If you get a 500 error with `"error":"missing_dependency"`, use the doctor script:
+
+```bash
+bash scripts/doctor.sh
+```
+
+**Two ways to fix:**
+
+1. **Set OLLAMA_BIN** (recommended):
+   ```bash
+   # Add explicit path to plist
+   /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OLLAMA_BIN string /opt/homebrew/bin/ollama" launchd/com.tinyintent.tinyrpc.plist
+   ```
+
+2. **Extend PATH** in plist:
+   ```bash
+   # Update PATH to include ollama location
+   /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:PATH /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" launchd/com.tinyintent.tinyrpc.plist
+   ```
+
+After changes: `make bridge-stop && make bridge && make bridge-logs`
+
 ## Route Types (Router v2)
 
 - **gen**: Local generation tasks (text, summaries, explanations)
