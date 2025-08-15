@@ -27,6 +27,12 @@
 		<string>8787</string>
 		<key>TINYINTENT_SECRET</key>
 		<string>CHANGE_ME_SECRET</string>
+		<!-- M4.1 Model Selector -->
+		<!-- <key>LOCAL_MODEL_PREF</key><string>auto</string> -->
+		<!-- M4.1 Hardening Controls -->
+		<!-- <key>TAILSCALE_ONLY</key><string>0</string> -->
+		<!-- <key>RATE_LIMIT_RPS</key><string>3</string> -->
+		<!-- <key>MAX_BODY_KB</key><string>32</string> -->
 	</dict>
 	<key>KeepAlive</key>
 	<dict>

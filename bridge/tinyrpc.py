@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-import os, sys, json, time, subprocess
+import os, sys, json, time, subprocess, hashlib, ipaddress
 from typing import Dict, Any
 from flask import Flask, request, jsonify
+from collections import defaultdict
 
 LABELS = {"send_claude", "plan_then_claude", "local_only"}
 MAX_TEXT = 8192
@@ -18,8 +19,45 @@ DOUBLE_CHECK = os.getenv("DOUBLE_CHECK", "0") == "1"
 FORCE_IPHONE = os.getenv("FORCE_IPHONE", "0") == "1"
 LOG_PATH = os.getenv("LOG_PATH", "/Users/oberfelder/projects/smallintent/bridge/logs/tinyrpc.log")
 
+# New M4.1 environment variables
+TAILSCALE_ONLY = os.getenv("TAILSCALE_ONLY", "0") == "1"
+RATE_LIMIT_RPS = float(os.getenv("RATE_LIMIT_RPS", "3"))
+MAX_BODY_KB = int(os.getenv("MAX_BODY_KB", "32"))
+
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+app.config['MAX_CONTENT_LENGTH'] = MAX_BODY_KB * 1024
+
+# Simple token bucket rate limiter
+class RateLimiter:
+    def __init__(self, rate: float):
+        self.rate = rate
+        self.buckets = defaultdict(lambda: {"tokens": rate, "last_refill": time.time()})
+    
+    def allow(self, key: str) -> bool:
+        now = time.time()
+        bucket = self.buckets[key]
+        
+        # Refill bucket based on elapsed time
+        elapsed = now - bucket["last_refill"]
+        bucket["tokens"] = min(self.rate, bucket["tokens"] + elapsed * self.rate)
+        bucket["last_refill"] = now
+        
+        # Check if request is allowed
+        if bucket["tokens"] >= 1.0:
+            bucket["tokens"] -= 1.0
+            return True
+        return False
+
+rate_limiter = RateLimiter(RATE_LIMIT_RPS)
+
+def is_tailscale_ip(ip: str) -> bool:
+    """Check if IP is in Tailscale range 100.64.0.0/10"""
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+        tailscale_net = ipaddress.ip_network("100.64.0.0/10")
+        return ip_obj in tailscale_net
+    except ValueError:
+        return False
 
 def log_line(msg: str) -> None:
     line = f"[tinyrpc] {time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
@@ -33,7 +71,7 @@ def log_line(msg: str) -> None:
 
 def error(status: int, message: str):
     log_line(f"err status={status} msg={message!r}")
-    return jsonify({"ok": False, "error": message}), status
+    return jsonify({"error": message}), status
 
 def sanity_check():
     # Fatal checks at startup
@@ -63,15 +101,29 @@ def validate_request():
         return error(415, "Content-Type must be application/json")
     
     # Content-Length validation  
-    if request.content_length and request.content_length > MAX_CONTENT_LENGTH:
-        return error(413, "Request too large")
+    if request.content_length and request.content_length > MAX_BODY_KB * 1024:
+        return error(413, "payload_too_large")
 
 @app.post("/route")
 def route():
-    # Auth
+    remote_addr = request.remote_addr or "unknown"
+    tailscale = is_tailscale_ip(remote_addr)
+    
+    # Auth check
     hdr = request.headers.get("X-TinyIntent-Secret", "")
     if not SECRET or hdr != SECRET:
+        log_line(f"remote_addr={remote_addr} tailscale={tailscale} allowed=false status=err msg=unauthorized")
         return error(401, "unauthorized")
+    
+    # Tailscale-only check
+    if TAILSCALE_ONLY and not tailscale:
+        log_line(f"remote_addr={remote_addr} tailscale={tailscale} allowed=false status=err msg=tailscale_required")
+        return error(403, "tailscale_required")
+    
+    # Rate limiting
+    if not rate_limiter.allow(remote_addr):
+        log_line(f"remote_addr={remote_addr} tailscale={tailscale} allowed=false status=err msg=rate_limited")
+        return error(429, "rate_limited")
 
     # Parse JSON
     try:
@@ -83,6 +135,9 @@ def route():
 
     text = str(payload.get("text", "") or "").strip()
     route_label = str(payload.get("route", "") or "").strip()
+    
+    body_size_kb = len(text.encode('utf-8')) / 1024
+    text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]
 
     if not text or len(text) > MAX_TEXT:
         return error(400, "text missing or too long")
@@ -114,10 +169,13 @@ def route():
     if DRY:
         args.append("--dry-run")
 
-    # Build environment with route and source
+    # Build environment with route, source, and remote context
     env = dict(os.environ)
     env["ROUTE"] = route_label
     env["TEXT_SOURCE"] = "iphone"
+    env["REMOTE_ADDR"] = remote_addr
+    env["TAILSCALE"] = "true" if tailscale else "false"
+    env["BODY_SIZE_KB"] = str(int(body_size_kb))
 
     # Call agent with route and text
     try:
@@ -127,7 +185,9 @@ def route():
 
     ok = agent.returncode == 0
     status = "ok" if ok else "err"
-    log_line(f"ip={request.remote_addr} len={len(text)} route={route_label} dry={1 if DRY else 0} status={status}")
+    allowed = True
+    
+    log_line(f"remote_addr={remote_addr} tailscale={tailscale} len={len(text)} hash={text_hash} route={route_label} body_size_kb={int(body_size_kb)} allowed={allowed} dry={1 if DRY else 0} status={status}")
 
     if not ok:
         return error(500, agent.stderr.strip() or "agent error")
@@ -148,5 +208,5 @@ def route():
 
 if __name__ == "__main__":
     sanity_check()
-    log_line(f"starting bind={BIND} port={PORT} dry={1 if DRY else 0}")
+    log_line(f"starting bind={BIND} port={PORT} dry={1 if DRY else 0} tailscale_only={TAILSCALE_ONLY} rate_limit={RATE_LIMIT_RPS} max_body_kb={MAX_BODY_KB}")
     app.run(host=BIND, port=PORT)
