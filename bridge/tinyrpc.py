@@ -4,7 +4,13 @@ from typing import Dict, Any
 from flask import Flask, request, jsonify
 from collections import defaultdict
 
-LABELS = {"send_claude", "plan_then_claude", "local_only"}
+LABELS = {"plan_then_local", "local_only"}
+
+# Backward compatibility mapping for legacy routes
+LEGACY_ROUTE_MAP = {
+    "send_claude": "local_only",
+    "plan_then_claude": "plan_then_local"
+}
 MAX_TEXT = 8192
 MAX_CONTENT_LENGTH = 40000
 
@@ -141,7 +147,12 @@ def route():
 
     if not text or len(text) > MAX_TEXT:
         return error(400, "text missing or too long")
-    if route_label not in LABELS:
+    
+    # Handle backward compatibility mapping
+    if route_label in LEGACY_ROUTE_MAP:
+        log_line(f"legacy_route_mapping: {route_label} -> {LEGACY_ROUTE_MAP[route_label]}")
+        route_label = LEGACY_ROUTE_MAP[route_label]
+    elif route_label not in LABELS:
         return error(400, "invalid route label")
 
     orig_label = route_label
@@ -187,7 +198,7 @@ def route():
     status = "ok" if ok else "err"
     allowed = True
     
-    log_line(f"remote_addr={remote_addr} tailscale={tailscale} len={len(text)} hash={text_hash} route={route_label} body_size_kb={int(body_size_kb)} allowed={allowed} dry={1 if DRY else 0} status={status}")
+    log_line(f"remote_addr={remote_addr} tailscale={tailscale} len={len(text)} hash={text_hash} route={route_label} body_size_kb={int(body_size_kb)} allowed={allowed} dry={1 if DRY else 0} status={status} privacy=local_only")
 
     if not ok:
         return error(500, agent.stderr.strip() or "agent error")

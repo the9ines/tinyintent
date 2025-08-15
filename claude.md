@@ -33,10 +33,10 @@
 - **Bridge**: `bridge/tinyrpc.py` via launchd plist `launchd/com.tinyintent.tinyrpc.plist`
 - **Agent**: `agent/neuro_agent`
 - **Data**: `router/data/intents.tsv` (`text<TAB>label`, no header)
-- **Labels (fixed)**: `send_claude`, `plan_then_claude`, `local_only`
+- **Labels (fixed)**: `plan_then_local`, `local_only` (with legacy compatibility for `send_claude`, `plan_then_claude`)
 - **Size budget**: **< 5 MB** package size
 - **ANE config**: **`.cpuAndNeuralEngine`** everywhere
-- **Current status**: **M1/M2 done; M3 in progress (bridge)**
+- **Current status**: **M9 Cloudless refactor complete - fully local-only agent**
 
 ## 1) Canonical File Tree (what should exist)
 
@@ -74,7 +74,7 @@ smallintent/
 - **Swift runner**:
   - Supports both `.mlpackage` and `.mlmodel`.
   - **Auto-compiles** to `.mlmodelc` before load.
-  - Prints **only** the label token (one of the 3).
+  - Prints **only** the label token (local_only or plan_then_local).
   - If model expects tokenized tensors (no string input), print clear error and exit 2.
 - **Agent**:
   - `neuro_agent` honors `ROUTE` env (skip classify).
@@ -87,7 +87,7 @@ smallintent/
   - Pass `ROUTE=<label>` and `TEXT_SOURCE=iphone` to `neuro_agent`.
   - Optional `DOUBLE_CHECK=1` reclassifies on Mac and may override unless `FORCE_IPHONE=1`.
   - One compact log line per request to stderr + `bridge/logs/tinyrpc.log`.
-- **Never** reintroduce: TF-IDF, `.pkl`, Create ML classifiers, network calls in local-only paths, or model files outside `router/`.
+- **Never** reintroduce: TF-IDF, `.pkl`, Create ML classifiers, any cloud/network calls, or model files outside `router/`.
 
 ## 3) PRD Reference (must link & embed)
 

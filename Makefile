@@ -28,8 +28,8 @@ test: build
 	@echo "Test 2: Research task (expect: send_claude)"
 	@echo "research longform report on quantum cryptography, with citations" | router/tinyintent || (echo "Test 2 failed" && exit 1)
 	@echo ""
-	@echo "Test 3: Planning task (expect: plan_then_claude)"
-	@echo "brainstorm steps then ask Claude to draft" | router/tinyintent || (echo "Test 3 failed" && exit 1)
+	@echo "Test 3: Planning task (expect: plan_then_local)"
+	@echo "brainstorm steps then execute locally" | router/tinyintent || (echo "Test 3 failed" && exit 1)
 	@echo ""
 	@echo "Test 4: Empty input (expect: non-zero exit)"
 	@echo "" | router/tinyintent && (echo "Test 4 failed - should have exited non-zero" && exit 1) || echo "Test 4 passed: empty input rejected"

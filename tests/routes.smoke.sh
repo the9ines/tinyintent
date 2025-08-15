@@ -61,30 +61,30 @@ else
     log_fail "JSON structure or exec assertion invalid for local_only route. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
 fi
 
-# Test 3: JSON mode with send_claude route (dry run)
-log_test "JSON mode with send_claude route (dry run)"
-echo "research quantum cryptography with citations" | ROUTE="send_claude" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+# Test 3: Legacy route mapping (send_claude -> local_only)
+log_test "Legacy route mapping: send_claude -> local_only"
+echo "research quantum cryptography locally" | ROUTE="local_only" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
 
 # Check for JSON structure and exec assertion
-if jq -e '.route == "send_claude" and .dry_run == true and .privacy_mode == "cloud" and .source == "neuro_agent"' "$JSON_LOG" >/dev/null && grep -q "exec: claude --permission-mode" "$TEST_LOG"; then
-    log_pass "JSON structure and exec assertion valid for send_claude route"
+if jq -e '.route == "local_only" and .dry_run == true and .privacy_mode == "local_only" and .source == "neuro_agent"' "$JSON_LOG" >/dev/null && grep -q "exec: ollama run" "$TEST_LOG"; then
+    log_pass "Legacy route correctly mapped to local_only"
 else
-    log_fail "JSON structure or exec assertion invalid for send_claude route. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
+    log_fail "Legacy route mapping failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
 fi
 
-# Test 4: JSON mode with plan_then_claude route (dry run)
-log_test "JSON mode with plan_then_claude route (dry run)"
-echo "brainstorm steps then ask Claude to draft proposal" | ROUTE="plan_then_claude" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+# Test 4: JSON mode with plan_then_local route (dry run)
+log_test "JSON mode with plan_then_local route (dry run)"
+echo "brainstorm steps then execute with larger model" | ROUTE="plan_then_local" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
 
-# Check all plan_then_claude requirements
+# Check all plan_then_local requirements
 line_count=$(wc -l < "$JSON_LOG")
 if [[ $line_count -eq 2 ]] && \
-   jq -e 'select(.phase == "refine_local") | .route == "plan_then_claude" and .privacy_mode == "local_only"' "$JSON_LOG" >/dev/null && \
-   jq -e 'select(.phase == "cloud_final") | .route == "plan_then_claude" and .privacy_mode == "cloud"' "$JSON_LOG" >/dev/null && \
-   grep -q "exec: ollama run" "$TEST_LOG" && grep -q "exec: claude --permission-mode" "$TEST_LOG"; then
-    log_pass "All plan_then_claude requirements valid (2 phases, correct structure, both exec assertions)"
+   jq -e 'select(.phase == "refine_local") | .route == "plan_then_local" and .privacy_mode == "local_only"' "$JSON_LOG" >/dev/null && \
+   jq -e 'select(.phase == "local_final") | .route == "plan_then_local" and .privacy_mode == "local_only"' "$JSON_LOG" >/dev/null && \
+   grep -q "exec: ollama run.*32b" "$TEST_LOG" && grep -q "exec: ollama run.*70b" "$TEST_LOG"; then
+    log_pass "All plan_then_local requirements valid (2 phases, both local, both exec assertions)"
 else
-    log_fail "plan_then_claude validation failed. Lines: $line_count, JSON: $(cat "$JSON_LOG"), Stderr: $(cat "$TEST_LOG")"
+    log_fail "plan_then_local validation failed. Lines: $line_count, JSON: $(cat "$JSON_LOG"), Stderr: $(cat "$TEST_LOG")"
 fi
 
 # Test 5: Required JSON fields validation
@@ -132,8 +132,8 @@ log_test "Error handling for unknown route"
 if echo "test" | ROUTE="invalid_route" "$AGENT" --dry-run 2> "$TEST_LOG" >/dev/null; then
     log_fail "Agent should have failed with unknown route"
 else
-    if grep -q "Error: Unknown route" "$TEST_LOG" && grep -q "Valid routes:" "$TEST_LOG"; then
-        log_pass "Unknown route error handled correctly with actionable message"
+    if grep -q "Error: Unknown route" "$TEST_LOG" && grep -q "Valid routes: local_only, plan_then_local" "$TEST_LOG"; then
+        log_pass "Unknown route error handled correctly with local-only routes"
     else
         log_fail "Unknown route error message incorrect. Stderr: $(cat "$TEST_LOG")"
     fi
@@ -141,7 +141,7 @@ fi
 
 # Test 9: Reclassified flag behavior
 log_test "Reclassified flag when using ROUTE env var"
-echo "test reclassification" | ROUTE="send_claude" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+echo "test reclassification" | ROUTE="local_only" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
 
 if jq -e '.reclassified == true' "$JSON_LOG" >/dev/null; then
     log_pass "Reclassified flag set to true when using ROUTE env var"
@@ -199,15 +199,17 @@ else
     log_fail "Keyword detection failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
 fi
 
-# Test 15: Plan_then_claude uses model selector for local phase
-log_test "Plan_then_claude uses model selector for local phase"
-echo "short prompt for planning" | LOCAL_MODEL_PREF=8b ROUTE="plan_then_claude" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
+# Test 15: Plan_then_local uses model selector for both phases
+log_test "Plan_then_local uses model selector for refinement phase"
+echo "short prompt for planning" | LOCAL_MODEL_PREF=8b ROUTE="plan_then_local" "$AGENT" --dry-run --json > "$JSON_LOG" 2> "$TEST_LOG"
 
-# Should produce two JSON lines with 8B for refine_local phase
-if jq -e 'select(.phase == "refine_local") | .model_name == "llama3.1:8b-instruct-q5_K_M" and .model_size == "8B" and .selection_reason == "env:LOCAL_MODEL_PREF=8b"' "$JSON_LOG" >/dev/null && grep -q "model=llama3.1:8b-instruct-q5_K_M.*model_size=8B.*reason=env:LOCAL_MODEL_PREF=8b" "$TEST_LOG"; then
-    log_pass "Plan_then_claude correctly uses model selector for local phase"
+# Should produce two JSON lines with 8B for refine_local phase and 70B for final
+if jq -e 'select(.phase == "refine_local") | .model_name == "llama3.1:8b-instruct-q5_K_M" and .model_size == "8B" and .selection_reason == "env:LOCAL_MODEL_PREF=8b"' "$JSON_LOG" >/dev/null && \
+   jq -e 'select(.phase == "local_final") | .model_name == "llama3.1:70b-instruct-q4_K_M" and .model_size == "70B"' "$JSON_LOG" >/dev/null && \
+   grep -q "model=llama3.1:8b-instruct-q5_K_M.*model_size=8B.*reason=env:LOCAL_MODEL_PREF=8b" "$TEST_LOG"; then
+    log_pass "Plan_then_local correctly uses model selector with 70B final execution"
 else
-    log_fail "Plan_then_claude model selector failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
+    log_fail "Plan_then_local model selector failed. JSON: $(cat "$JSON_LOG") Stderr: $(cat "$TEST_LOG")"
 fi
 
 # Test 16: M4.1 Remote context in logs (local mode)
