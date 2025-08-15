@@ -93,6 +93,32 @@ make bridge
 make iphone-test
 ```
 
+### Remote via Tailscale (M4.1)
+TinyIntent supports worldwide access via Tailscale overlay network:
+
+```bash
+# iPhone calls Mac from anywhere in the world
+# Endpoint: http://<TAILSCALE-IP>:8787/route
+# Example: http://100.64.1.5:8787/route
+
+# Required: X-TinyIntent-Secret header for authentication
+curl -H "X-TinyIntent-Secret: your-secret-here" \
+     -H "Content-Type: application/json" \
+     -d '{"text":"test from remote","route":"local_only"}' \
+     http://100.64.1.5:8787/route
+
+# Security controls (environment variables):
+# TAILSCALE_ONLY=1     - Only accept Tailscale IPs (100.64.0.0/10)
+# RATE_LIMIT_RPS=3     - Max requests per second per IP
+# MAX_BODY_KB=32       - Request size limit in KB
+
+# Enhanced logging includes:
+# - remote_addr: Source IP address
+# - tailscale: boolean (true for 100.64.0.0/10 IPs)
+# - allowed: boolean (passed security checks)
+# - body_size_kb: Request payload size
+```
+
 ## Route Types
 
 - **local_only**: Privacy-first processing using local Ollama models (32B → 8B fallback)

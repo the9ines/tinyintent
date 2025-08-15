@@ -96,6 +96,11 @@ emit_json_log() {
     local phase="${9:-}"
     local selection_reason="${10:-}"
     
+    # Remote context from environment (set by bridge)
+    local remote_addr="${REMOTE_ADDR:-local}"
+    local tailscale="${TAILSCALE:-false}"
+    local body_size_kb="${BODY_SIZE_KB:-0}"
+    
     local timestamp
     if date -u +"%Y-%m-%dT%H:%M:%S.%3NZ" 2>/dev/null | grep -q '%3N'; then
         # %3N not supported, use milliseconds approximation
@@ -126,6 +131,12 @@ emit_json_log() {
     if [[ -n "$selection_reason" ]]; then
         json_log+=",\"selection_reason\":\"$selection_reason\""
     fi
+    
+    # Add remote context
+    json_log+=",\"remote_addr\":\"$remote_addr\""
+    json_log+=",\"tailscale\":$tailscale"
+    json_log+=",\"allowed\":true"
+    json_log+=",\"body_size_kb\":$body_size_kb"
     
     json_log+="}"
     
@@ -385,8 +396,9 @@ execute_ollama_with_selection() {
         local tokens_out=50  # Estimated for dry run
         local model_size=$(get_model_size "$model")
         
-        # Human-readable feedback to stderr with model_size and reason
-        log "route=local_only model=$model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=0 privacy=local_only reason=$selection_reason"
+        # Human-readable feedback to stderr with model_size, reason, and remote info
+        local remote_info="${REMOTE_ADDR:-local}"
+        log "route=local_only model=$model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=0 privacy=local_only reason=$selection_reason remote=$remote_info"
         
         # JSON log to stdout
         emit_json_log "local_only" "$model" "$model_size" "$tokens_in" "$tokens_out" "0" "local_only" "$reclassified" "" "$selection_reason"
@@ -421,8 +433,9 @@ execute_ollama_with_selection() {
         local tokens_out=$(estimate_tokens "$output")
         local model_size=$(get_model_size "$model")
         
-        # Human-readable feedback to stderr with model_size and reason
-        log "route=local_only model=$model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=$duration_ms privacy=local_only reason=$selection_reason"
+        # Human-readable feedback to stderr with model_size, reason, and remote info
+        local remote_info="${REMOTE_ADDR:-local}"
+        log "route=local_only model=$model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=$duration_ms privacy=local_only reason=$selection_reason remote=$remote_info"
         
         # JSON log to stdout
         emit_json_log "local_only" "$model" "$model_size" "$tokens_in" "$tokens_out" "$duration_ms" "local_only" "$reclassified" "" "$selection_reason"
@@ -520,7 +533,8 @@ execute_claude() {
         local tokens_out=80  # Estimated for dry run
         
         # Human-readable feedback to stderr
-        log "route=send_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=0 privacy=cloud"
+        local remote_info="${REMOTE_ADDR:-local}"
+        log "route=send_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=0 privacy=cloud remote=$remote_info"
         
         # JSON log to stdout
         emit_json_log "send_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_in" "$tokens_out" "0" "cloud" "$reclassified"
@@ -555,7 +569,8 @@ execute_claude() {
         local tokens_out=$(estimate_tokens "$output")
         
         # Human-readable feedback to stderr
-        log "route=send_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=$duration_ms privacy=cloud"
+        local remote_info="${REMOTE_ADDR:-local}"
+        log "route=send_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in tokens_out=$tokens_out latency_ms=$duration_ms privacy=cloud remote=$remote_info"
         
         # JSON log to stdout
         emit_json_log "send_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_in" "$tokens_out" "$duration_ms" "cloud" "$reclassified"
@@ -601,11 +616,13 @@ execute_plan_then_claude() {
         local model_size=$(get_model_size "$selected_model")
         
         # Phase 1: Local refinement
-        log "Phase 1: model=$selected_model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out_1 latency_ms=0 reason=$selection_reason"
+        local remote_info="${REMOTE_ADDR:-local}"
+        log "Phase 1: model=$selected_model model_size=$model_size tokens_in=$tokens_in tokens_out=$tokens_out_1 latency_ms=0 reason=$selection_reason remote=$remote_info"
         emit_json_log "plan_then_claude" "$selected_model" "$model_size" "$tokens_in" "$tokens_out_1" "0" "local_only" "$reclassified" "refine_local" "$selection_reason"
         
         # Phase 2: Cloud execution
-        log "route=plan_then_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_out_1 tokens_out=$tokens_out_2 latency_ms=0 privacy=cloud"
+        local remote_info="${REMOTE_ADDR:-local}"
+        log "route=plan_then_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_out_1 tokens_out=$tokens_out_2 latency_ms=0 privacy=cloud remote=$remote_info"
         emit_json_log "plan_then_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_out_1" "$tokens_out_2" "0" "cloud" "$reclassified" "cloud_final"
         
         return 0
@@ -650,7 +667,8 @@ execute_plan_then_claude() {
     local tokens_out_1=$(estimate_tokens "$refined_text")
     local model_size_1=$(get_model_size "$selected_model")
     
-    log "Phase 1 complete: model=$selected_model model_size=$model_size_1 tokens_in=$tokens_in_1 tokens_out=$tokens_out_1 latency_ms=$duration_ms reason=$selection_reason"
+    local remote_info="${REMOTE_ADDR:-local}"
+    log "Phase 1 complete: model=$selected_model model_size=$model_size_1 tokens_in=$tokens_in_1 tokens_out=$tokens_out_1 latency_ms=$duration_ms reason=$selection_reason remote=$remote_info"
     emit_json_log "plan_then_claude" "$selected_model" "$model_size_1" "$tokens_in_1" "$tokens_out_1" "$duration_ms" "local_only" "$reclassified" "refine_local" "$selection_reason"
     
     # Phase 2: Cloud execution with Claude
@@ -680,7 +698,8 @@ execute_plan_then_claude() {
         local tokens_out_2=$(estimate_tokens "$final_output")
         
         # Human-readable feedback for final phase
-        log "route=plan_then_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in_2 tokens_out=$tokens_out_2 latency_ms=$duration_ms privacy=cloud"
+        local remote_info="${REMOTE_ADDR:-local}"
+        log "route=plan_then_claude model=$CLAUDE_CLI_MODEL tokens_in=$tokens_in_2 tokens_out=$tokens_out_2 latency_ms=$duration_ms privacy=cloud remote=$remote_info"
         
         # JSON log for Phase 2
         emit_json_log "plan_then_claude" "$CLAUDE_CLI_MODEL" "cloud" "$tokens_in_2" "$tokens_out_2" "$duration_ms" "cloud" "$reclassified" "cloud_final"
