@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # TinyIntent No-Cloud Guard Test
-# Ensures that M10.1 cloudless scrub is complete and no forbidden tokens remain
+# Ensures that M10.2 language polish is complete and no forbidden tokens remain
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Allowlist for historical references
-ALLOWLIST_PATHS=("docs/history/" "CHANGELOG.md" ".git/" "claude.md")
+ALLOWLIST_PATHS=(".git/" "claude.md")
 
 # Colors for output
 RED='\033[0;31m'
@@ -38,7 +38,7 @@ log_fail() {
 }
 
 echo "==========================================="
-echo -e "${YELLOW}TinyIntent M10.1 Cloudless Guard Tests${NC}"
+echo -e "${YELLOW}TinyIntent M10.2 Language Polish Guard Tests${NC}"
 echo "==========================================="
 
 # Helper function to check if path is in allowlist
@@ -59,17 +59,39 @@ while IFS= read -r -d '' file; do
     if is_allowlisted "$file"; then
         continue
     fi
-    # Skip files that only have safe patterns (runtime construction)
+    # Check for forbidden tokens: legacy names and local-only violations
+    violation_found=false
+    first_violation=""
+    
+    # Check for claude (skip files that only have safe patterns)
     if grep -qi "claude" "$file" 2>/dev/null; then
         # Allow runtime construction patterns but not literal usage
         if ! grep -q "printf.*claude\|'c''laude'" "$file" 2>/dev/null; then
-            forbidden_files+=("$file")
+            violation_found=true
+            first_violation=$(grep -n -i "claude" "$file" 2>/dev/null | head -1)
         fi
+    fi
+    
+    # Check for local-only violations (always forbidden)
+    FORBIDDEN_TERM="$(printf 'cloud%s' 'less')"
+    if grep -qi "$FORBIDDEN_TERM" "$file" 2>/dev/null; then
+        violation_found=true
+        if [[ -z "$first_violation" ]]; then
+            first_violation=$(grep -n -i "$FORBIDDEN_TERM" "$file" 2>/dev/null | head -1)
+        fi
+    fi
+    
+    if [[ "$violation_found" == "true" ]]; then
+        forbidden_files+=("$file:$first_violation")
     fi
 done < <(find "$PROJECT_ROOT" -type f \( -name "*.py" -o -name "*.sh" -o -name "*.md" -o -name "*.yml" -o -name "*.yaml" -o -name "*.plist" \) -print0 2>/dev/null)
 
 if [[ ${#forbidden_files[@]} -gt 0 ]]; then
-    log_fail "Found forbidden tokens in files: ${forbidden_files[*]}"
+    echo -e "${RED}[FAIL]${NC} Found forbidden tokens:"
+    for file_info in "${forbidden_files[@]}"; do
+        echo "  $file_info"
+    done
+    exit 1
 else
     log_pass "No forbidden tokens found in source files"
 fi
@@ -169,9 +191,9 @@ echo -e "${GREEN}Guard tests passed: $TESTS_PASSED/$TESTS_RUN${NC}"
 echo "=========================================="
 
 if [[ $TESTS_PASSED -ge $TESTS_RUN ]]; then
-    echo -e "${GREEN}✅ M10.1 Cloudless scrub complete - no forbidden tokens detected${NC}"
+    echo -e "${GREEN}✅ M10.2 Language polish complete - no forbidden tokens detected${NC}"
     exit 0
 else
-    echo -e "${RED}❌ M10.1 Cloudless scrub incomplete - forbidden tokens still present${NC}"
+    echo -e "${RED}❌ M10.2 Language polish incomplete - forbidden tokens still present${NC}"
     exit 1
 fi
