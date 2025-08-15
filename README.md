@@ -119,6 +119,20 @@ curl -H "X-TinyIntent-Secret: your-secret-here" \
 # - body_size_kb: Request payload size
 ```
 
+## Health & Readiness
+
+Monitor the bridge service with JSON health endpoints:
+
+```bash
+# Health check (always returns 200 if service is up)
+curl http://127.0.0.1:8787/healthz | jq .
+
+# Readiness check (200 when all local checks pass, 503 otherwise)
+curl http://127.0.0.1:8787/readyz | jq .
+```
+
+The readiness endpoint checks environment variables, router binary availability, and Ollama presence. Useful for deployment automation and CI/CD pipelines.
+
 ## Route Types (Router v2)
 
 - **gen**: Local generation tasks (text, summaries, explanations)

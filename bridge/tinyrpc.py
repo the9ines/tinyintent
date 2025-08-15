@@ -30,6 +30,9 @@ MAX_BODY_KB = int(os.getenv("MAX_BODY_KB", "32"))
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_BODY_KB * 1024
 
+# Record start time for uptime calculation
+START_MONO = time.monotonic()
+
 # Simple token bucket rate limiter
 class RateLimiter:
     def __init__(self, rate: float):
@@ -96,6 +99,139 @@ def sanity_check():
         log_line(f"warn: classifier not found at {BIN}")
     if not os.path.isfile(AGENT):
         log_line(f"warn: neuro_agent not found at {AGENT}")
+
+def read_version_sha():
+    """Read version and git SHA for health endpoints"""
+    version = "dev"
+    build_sha = "unknown"
+    
+    # Try to read VERSION file
+    try:
+        version_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "VERSION")
+        if os.path.isfile(version_path):
+            with open(version_path, 'r') as f:
+                version = f.read().strip()
+    except Exception:
+        pass
+    
+    # Try to get git SHA
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            cwd=os.path.dirname(os.path.dirname(__file__))
+        )
+        if proc.returncode == 0:
+            build_sha = proc.stdout.strip()
+    except Exception:
+        pass
+    
+    return version, build_sha
+
+def env_ok():
+    """Check if environment variables are valid"""
+    try:
+        # Check required secret
+        if not SECRET or SECRET == "CHANGE_ME_SECRET":
+            return False
+        
+        # Check boolean flags
+        dry_run = os.getenv("TINYINTENT_DRYRUN", "0")
+        if dry_run not in {"0", "1"}:
+            return False
+        
+        double_check = os.getenv("DOUBLE_CHECK", "0")
+        if double_check not in {"0", "1"}:
+            return False
+        
+        force_iphone = os.getenv("FORCE_IPHONE", "0")
+        if force_iphone not in {"0", "1"}:
+            return False
+        
+        tailscale_only = os.getenv("TAILSCALE_ONLY", "0")
+        if tailscale_only not in {"0", "1"}:
+            return False
+        
+        # Check model preference
+        local_model_pref = os.getenv("LOCAL_MODEL_PREF", "auto")
+        if local_model_pref not in {"auto", "8b", "32b", "70b"}:
+            return False
+        
+        # Check numeric values
+        if RATE_LIMIT_RPS <= 0:
+            return False
+        
+        if MAX_BODY_KB <= 0:
+            return False
+        
+        return True
+    except Exception:
+        return False
+
+def router_ok():
+    """Check if router binary exists and is executable"""
+    return os.path.isfile(BIN) and os.access(BIN, os.X_OK)
+
+def ollama_ok():
+    """Check if ollama is available"""
+    try:
+        proc = subprocess.run(
+            ["ollama", "--version"],
+            capture_output=True,
+            timeout=3
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+@app.get("/healthz")
+def healthz():
+    version, build_sha = read_version_sha()
+    uptime_s = time.monotonic() - START_MONO
+    
+    return jsonify({
+        "status": "ok",
+        "uptime_s": uptime_s,
+        "version": version,
+        "build_sha": build_sha,
+        "tailscale_only": TAILSCALE_ONLY,
+        "rate_limit_rps": int(RATE_LIMIT_RPS),
+        "max_body_kb": MAX_BODY_KB,
+        "local_model_pref": os.getenv("LOCAL_MODEL_PREF", "auto")
+    })
+
+@app.get("/readyz")
+def readyz():
+    version, build_sha = read_version_sha()
+    
+    checks = {
+        "env_valid": env_ok(),
+        "router_binary": router_ok(),
+        "ollama_present": ollama_ok()
+    }
+    
+    ready = all(checks.values())
+    reasons = []
+    
+    if not checks["env_valid"]:
+        reasons.append("Environment validation failed")
+    if not checks["router_binary"]:
+        reasons.append("Router binary not found or not executable")
+    if not checks["ollama_present"]:
+        reasons.append("Ollama not available")
+    
+    response = {
+        "ready": ready,
+        "reasons": reasons,
+        "checks": checks,
+        "privacy": "local_only",
+        "version": version,
+        "build_sha": build_sha
+    }
+    
+    return jsonify(response), 200 if ready else 503
 
 @app.before_request
 def validate_request():
