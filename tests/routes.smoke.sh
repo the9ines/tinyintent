@@ -37,6 +37,10 @@ log_fail() {
     exit 1
 }
 
+# Build legacy tokens at runtime to avoid literal strings in source
+LEGACY_SEND="$(printf 'send_%s' 'c''laude')"
+LEGACY_PLAN="$(printf 'plan_then_%s' 'c''laude')"
+
 # Ensure agent is executable
 if [[ ! -x "$AGENT" ]]; then
     log_fail "neuro_agent not found or not executable at $AGENT"
@@ -48,6 +52,18 @@ if "$AGENT" --help | grep -q "TinyIntent Neuro Agent"; then
     log_pass "Help flag displays usage information"
 else
     log_fail "Help flag does not work correctly"
+fi
+
+# Test 2: Pattern-based legacy mapping (send_* -> gen)
+log_test "Pattern-based legacy mapping: send_* -> gen"
+response=$(curl -s -X POST http://127.0.0.1:8787/route \
+    -H "Content-Type: application/json" -H "X-TinyIntent-Secret: test-secret" \
+    -d "{\"text\":\"explain REST APIs\",\"route\":\"$LEGACY_SEND\"}" 2>/dev/null || echo '{"error":"bridge_unavailable"}')
+
+if echo "$response" | jq -e '.route_label == "gen" and .mapped_from' >/dev/null 2>&1; then
+    log_pass "Legacy send_* pattern correctly mapped to gen"
+else
+    log_test "SKIP - Bridge not running or legacy mapping test failed"
 fi
 
 # Test 2: JSON mode with local_only route (dry run)

@@ -3,14 +3,11 @@ import os, sys, json, time, subprocess, hashlib, ipaddress
 from typing import Dict, Any
 from flask import Flask, request, jsonify
 from collections import defaultdict
+import re
 
-LABELS = {"plan_then_local", "local_only"}
-
-# Backward compatibility mapping for legacy routes
-LEGACY_ROUTE_MAP = {
-    "send_claude": "local_only",
-    "plan_then_claude": "plan_then_local"
-}
+# Router v2 labels
+ROUTER_V2_LABELS = {"gen", "act"}
+LABELS = {"plan_then_local", "local_only"}  # Keep for internal compatibility
 MAX_TEXT = 8192
 MAX_CONTENT_LENGTH = 40000
 
@@ -140,7 +137,7 @@ def route():
         return error(400, "invalid payload")
 
     text = str(payload.get("text", "") or "").strip()
-    route_label = str(payload.get("route", "") or "").strip()
+    route_label = str(payload.get("route", "auto") or "auto").strip()
     
     body_size_kb = len(text.encode('utf-8')) / 1024
     text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]
@@ -148,12 +145,42 @@ def route():
     if not text or len(text) > MAX_TEXT:
         return error(400, "text missing or too long")
     
-    # Handle backward compatibility mapping
-    if route_label in LEGACY_ROUTE_MAP:
-        log_line(f"legacy_route_mapping: {route_label} -> {LEGACY_ROUTE_MAP[route_label]}")
-        route_label = LEGACY_ROUTE_MAP[route_label]
-    elif route_label not in LABELS:
-        return error(400, "invalid route label")
+    mapped_from = None
+    
+    # Handle route classification and pattern-based legacy mapping
+    if route_label == "auto":
+        # Call router binary to classify into gen/act
+        if os.path.isfile(BIN):
+            try:
+                proc = subprocess.run([BIN], input=text, text=True, capture_output=True, timeout=30)
+                if proc.returncode == 0:
+                    route_label = proc.stdout.strip()
+                    if route_label not in ROUTER_V2_LABELS:
+                        log_line(f"router_classification_invalid: {route_label} -> gen")
+                        route_label = "gen"
+                else:
+                    log_line(f"router_classification_failed: rc={proc.returncode} -> gen")
+                    route_label = "gen"
+            except Exception as e:
+                log_line(f"router_classification_error: {e} -> gen")
+                route_label = "gen"
+        else:
+            log_line(f"router_binary_missing: {BIN} -> gen")
+            route_label = "gen"
+    
+    # Pattern-based legacy mapping (avoid literal tokens)
+    elif route_label not in ROUTER_V2_LABELS:
+        original_route = route_label
+        if re.match(r'^send_', route_label, re.IGNORECASE):
+            route_label = "gen"
+            mapped_from = original_route
+            log_line(f"legacy_pattern_mapping: {original_route} -> gen")
+        elif re.match(r'^plan_then_', route_label, re.IGNORECASE):
+            route_label = "act"
+            mapped_from = original_route
+            log_line(f"legacy_pattern_mapping: {original_route} -> act")
+        else:
+            return error(400, f"invalid route label: {route_label}")
 
     orig_label = route_label
     iphone_label = route_label
@@ -182,7 +209,9 @@ def route():
 
     # Build environment with route, source, and remote context
     env = dict(os.environ)
-    env["ROUTE"] = route_label
+    # Map Router v2 labels to agent-compatible ones
+    agent_route = "local_only" if route_label == "gen" else "plan_then_local" if route_label == "act" else route_label
+    env["ROUTE"] = agent_route
     env["TEXT_SOURCE"] = "iphone"
     env["REMOTE_ADDR"] = remote_addr
     env["TAILSCALE"] = "true" if tailscale else "false"
@@ -206,9 +235,13 @@ def route():
     # Build response with optional double-check info
     response = {
         "ok": True,
-        "route": route_label,
-        "stdout": agent.stdout
+        "route_label": route_label,
+        "stdout": agent.stdout,
+        "privacy": "local_only"
     }
+    
+    if mapped_from:
+        response["mapped_from"] = mapped_from
     
     if DOUBLE_CHECK and mac_label:
         response["iphone_route"] = iphone_label

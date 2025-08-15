@@ -16,7 +16,7 @@ def create_placeholder_model():
     # In practice, this would be a proper DistilBERT model
     
     # Define the labels
-    labels = ["send_claude", "plan_then_claude", "local_only"]
+    labels = ["gen", "act", "local_only"]
     
     # Create model spec
     spec = Model_pb2.Model()

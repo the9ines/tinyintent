@@ -1,6 +1,6 @@
-# TinyIntent
+# TinyIntent Router v2
 
-A lightweight, local-first routing agent for macOS that intelligently routes prompts to appropriate backends (Claude CLI, Ollama) based on context and privacy requirements.
+Local-first AI routing agent with binary gen/act classification. Zero external dependencies.
 
 ## Quick Start
 
@@ -53,11 +53,11 @@ For automation and monitoring, use `--json` flag to get structured output:
 # Local-only processing (privacy-first)
 echo "summarize this code locally" | agent/neuro_agent
 
-# Send to Claude for complex tasks
+# Action planning tasks
 echo "research quantum cryptography with citations" | agent/neuro_agent
 
-# Plan locally, then execute on Claude
-echo "brainstorm steps then ask Claude to draft proposal" | agent/neuro_agent
+# Multi-step planning with larger models
+echo "brainstorm comprehensive project plan" | agent/neuro_agent
 ```
 
 ### With Options
@@ -119,11 +119,13 @@ curl -H "X-TinyIntent-Secret: your-secret-here" \
 # - body_size_kb: Request payload size
 ```
 
-## Route Types
+## Route Types (Router v2)
 
-- **local_only**: Privacy-first processing using local Ollama models (32B → 8B fallback)
-- **send_claude**: Direct routing to Claude CLI for complex tasks requiring latest knowledge
-- **plan_then_claude**: Local refinement with Ollama, then final execution on Claude
+- **gen**: Local generation tasks (text, summaries, explanations)
+- **act**: Action planning with preview (multi-step tasks, research)
+- **auto**: Automatic classification (default)
+
+All routes execute locally with `privacy: local_only`.
 
 ## Development
 
@@ -138,4 +140,4 @@ make clean && make build && make test
 make clean
 ```
 
-For detailed setup and development instructions, see [PRD.md](PRD.md) and [claude.md](claude.md).
+For detailed setup and development instructions, see [PRD.md](PRD.md).

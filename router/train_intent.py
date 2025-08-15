@@ -33,9 +33,9 @@ if torch.cuda.is_available():
 # Tiny backbone for <5MB requirement
 BACKBONE = "prajjwal1/bert-tiny"
 
-# Fixed label mapping (exact, no drift)
-label2id = {"send_claude":0, "plan_then_claude":1, "local_only":2}
-id2label = {0:"send_claude", 1:"plan_then_claude", 2:"local_only"}
+# Fixed label mapping (Router v2)
+label2id = {"gen":0, "act":1, "local_only":2}
+id2label = {0:"gen", 1:"act", 2:"local_only"}
 
 class IntentDataset(Dataset):
     def __init__(self, texts, labels, tokenizer, max_length=192):
@@ -162,9 +162,9 @@ def main():
     cm = confusion_matrix(y_true, y_pred)
     print(f"\nConfusion Matrix:")
     print("Predicted:")
-    print("          send_claude  plan_then_claude  local_only")
+    print("          gen          act              local_only")
     print("Actual:")
-    labels = ["send_claude", "plan_then_claude", "local_only"]
+    labels = ["gen", "act", "local_only"]
     for i, label in enumerate(labels):
         print(f"{label:>13}: {cm[i]}")
     

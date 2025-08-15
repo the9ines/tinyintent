@@ -25,7 +25,7 @@ test: build
 	@echo "Test 1: Local summarization (expect: local_only)"
 	@echo "local summarization" | router/tinyintent || (echo "Test 1 failed" && exit 1)
 	@echo ""
-	@echo "Test 2: Research task (expect: send_claude)"
+	@echo "Test 2: Research task (expect: gen)"
 	@echo "research longform report on quantum cryptography, with citations" | router/tinyintent || (echo "Test 2 failed" && exit 1)
 	@echo ""
 	@echo "Test 3: Planning task (expect: plan_then_local)"

@@ -1,17 +1,12 @@
-# TinyIntent — Updated PRD (v1.5 + iPhone→Mac Flow)
+# TinyIntent — PRD v2.0 (Local-Only)
 
 **Audience:** Senior ICs & PM  
-**Author:** Gemini (updated for v1.5)  
+**Author:** TinyIntent Team (v2.0 local-only refactor)  
 **Status:** Final  
 
 ## 1. Overview & Goals
 
-TinyIntent is a lightweight, local-first routing agent for macOS.  
-It intercepts prompts (keyboard or iPhone voice) and routes them to:
-
-- Claude CLI
-- Ollama (local refinement/full response)
-- Core ML classifier (ANE-optimized DistilBERT, <10ms)
+**TinyIntent v2**: Local-only AI routing agent for safe automation of Mac/VPS runbooks with zero external dependencies.
 
 **New for v1.5:**  
 Supports **iPhone Shortcut flow** where the phone listens to your voice, runs the same TinyIntent DistilBERT classifier **on-device**, and sends a small `{text, route}` payload to the Mac via secure HTTP (LAN or Tailscale). The Mac's `neuro_agent` then executes the request with the proper backend.
@@ -22,7 +17,7 @@ Supports **iPhone Shortcut flow** where the phone listens to your voice, runs th
 - **Flawless v1 flow** for:
   - Local Mac CLI input
   - Remote iPhone voice input via Shortcut → Mac bridge
-- **Reliable "Hands"**: Claude CLI, Ollama
+- **Reliable "Hands"**: Local model execution via Ollama
 - **Reproducibility**: Deterministic builds via `Makefile`
 
 ## 2. Personas
@@ -37,7 +32,7 @@ Supports **iPhone Shortcut flow** where the phone listens to your voice, runs th
 
 - Backbone: ANE-optimized DistilBERT (PyTorch → Core ML, <5MB, 8-bit quantized)
 - Input: raw text
-- Output: `send_claude` | `plan_then_claude` | `local_only`
+- Output: `gen` | `act` (Router v2 labels)
 
 ### 3.2 Trainer: `router/train_intent.py`
 
@@ -56,9 +51,8 @@ Supports **iPhone Shortcut flow** where the phone listens to your voice, runs th
 ### 3.4 Hands: `agent/neuro_agent` (bash)
 
 - Routes label:
-  - `send_claude`: Claude CLI
-  - `plan_then_claude`: Ollama → Claude
-  - `local_only`: Ollama
+  - `gen`: Local generation via Ollama
+  - `act`: Action planning with preview via Ollama
 - Fallback order:
   1. `qwen2.5:32b-instruct-q4_K_M`
   2. `llama3.1:8b-instruct-q5_K_M`
@@ -70,7 +64,7 @@ Supports **iPhone Shortcut flow** where the phone listens to your voice, runs th
 - **Shortcut (on iPhone)**  
   1) Dictate Text (on‑device)  
   2) Run Core ML Model (TinyIntent **iOS** DistilBERT export) → one of:
-     `send_claude`, `plan_then_claude`, `local_only`  
+     `gen`, `act`, or automatic classification  
   3) POST `{text, route}` to the Mac bridge endpoint with header `X-TinyIntent-Secret: <secret>`
 
 - **Mac Bridge (`tinyrpc`)**  
@@ -102,11 +96,11 @@ Supports **iPhone Shortcut flow** where the phone listens to your voice, runs th
 ## 5. Data
 
 - 60+ labeled examples, 20 per class
-- Favor `local_only` for ambiguous cases
+- Favor `gen` for ambiguous cases
 
 ## 6. Security & Privacy
 
-- No outbound calls for `local_only`
+- No outbound calls - all processing local-only
 - Shared secret auth for iPhone→Mac POST
 - Logs to `~/.agent_sessions/`
 
@@ -139,7 +133,7 @@ Supports **iPhone Shortcut flow** where the phone listens to your voice, runs th
 ↓
 [Mac ANE runtime check] (optional second classify)
 ↓
-[Claude CLI / Ollama]
+[Local Ollama Execution]
 ↓
 [stdout]
 ```
@@ -148,7 +142,7 @@ Supports **iPhone Shortcut flow** where the phone listens to your voice, runs th
 
 - Terminal quirks on blank line submit
 - Model misroutes → dataset bias
-- Ollama/Claude errors → handle gracefully
+- Ollama errors → handle gracefully
 
 ## 10. Milestones
 

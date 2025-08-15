@@ -5,7 +5,7 @@ A minimal Flask server that receives `{text, route}` from the iPhone Shortcut an
 ## Security
 - Requires `X-TinyIntent-Secret` header (set in launchd plist or env).
 - Default bind: 127.0.0.1. To accept LAN/Tailscale, set `TINYINTENT_BIND=0.0.0.0` and firewall appropriately.
-- Whitelists label to: send_claude, plan_then_claude, local_only.
+- Supports Router v2 labels: gen, act, auto (with legacy pattern mapping).
 - Caps text length at 8192 chars.
 - `TINYINTENT_DRYRUN=1` prints planned commands without executing.
 

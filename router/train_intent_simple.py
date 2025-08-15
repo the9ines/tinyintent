@@ -54,7 +54,7 @@ def load_and_validate_tsv(file_path):
     print(f"Label distribution:\n{df['label'].value_counts()}")
     
     # Validate expected labels
-    expected_labels = {'send_claude', 'plan_then_claude', 'local_only'}
+    expected_labels = {'gen', 'act', 'local_only'}
     actual_labels = set(df['label'].unique())
     if actual_labels != expected_labels:
         raise ValueError(f"Invalid labels. Expected {expected_labels}, got {actual_labels}")
@@ -111,11 +111,11 @@ def train_model(train_texts, val_texts, train_labels, val_labels):
     
     # Print confusion matrix
     cm = confusion_matrix(val_labels, val_predictions)
-    label_names = ['local_only', 'plan_then_claude', 'send_claude']
+    label_names = ['local_only', 'act', 'gen']
     
     print("\nConfusion Matrix:")
     print("Predicted:")
-    print("          local_only  plan_then_claude  send_claude")
+    print("          local_only  act              gen")
     print("Actual:")
     
     for i, true_label in enumerate(label_names):
