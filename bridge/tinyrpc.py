@@ -4,13 +4,16 @@ TinyIntent Bridge MVP - FastAPI service for routing and orchestrating AI tasks.
 
 import os
 import shutil
+import subprocess
+import time
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import uvicorn
 
 from resolve import ModelResolver
+from events import event_logger, session_manager
 
 
 # Initialize FastAPI app
@@ -29,6 +32,13 @@ class RouteRequest(BaseModel):
     route: Optional[str] = "auto"  # auto|gen|act
     llm_pref: Optional[str] = None  # small|medium|large
     llm_model: Optional[str] = None  # specific ollama tag
+    session_id: Optional[str] = None  # Session ID for episode tracking
+    
+    @validator('text')
+    def text_must_not_be_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('text field cannot be empty')
+        return v
 
 
 class RouteResponse(BaseModel):
@@ -37,7 +47,27 @@ class RouteResponse(BaseModel):
     route_used: str
     text_response: Optional[str] = None
     model_used: Optional[str] = None
+    latency_ms: Optional[int] = None
+    session_id: str
     _router_fallback: Optional[bool] = None
+
+
+class FeedbackRequest(BaseModel):
+    """Request model for POST /feedback endpoint."""
+    session_id: str
+    feedback: str
+    
+    @validator('feedback')
+    def feedback_must_not_be_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('feedback field cannot be empty')
+        return v
+
+
+class FeedbackResponse(BaseModel):
+    """Response model for POST /feedback endpoint."""
+    status: str
+    message: str
 
 
 def get_tinyintent_secret() -> str:
@@ -77,6 +107,49 @@ def verify_auth(request: Request, credentials: HTTPAuthorizationCredentials = De
         )
     
     return True
+
+
+def call_ollama_generate(model_tag: str, prompt: str) -> tuple[str, int]:
+    """Call ollama to generate text and return the response with latency."""
+    start_time = time.time()
+    
+    try:
+        # Call ollama run command
+        result = subprocess.run(
+            ["ollama", "run", model_tag, prompt],
+            capture_output=True,
+            text=True,
+            timeout=60  # 60 second timeout
+        )
+        
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
+        
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() if result.stderr else "Unknown ollama error"
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ollama execution failed: {error_msg}"
+            )
+        
+        response_text = result.stdout.strip()
+        return response_text, latency_ms
+        
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=500,
+            detail="Ollama request timed out"
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="Ollama binary not found. Please ensure ollama is installed and in PATH."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error calling ollama: {str(e)}"
+        )
 
 
 def check_ollama_present() -> bool:
@@ -133,6 +206,16 @@ async def route_request(
 ) -> RouteResponse:
     """Route a request to generation or action."""
     
+    # Get or create session ID
+    session_id = request.session_id
+    if not session_id:
+        session_id = session_manager.create_session()
+    elif not session_manager.session_exists(session_id):
+        session_manager.create_session(session_id)
+    
+    # Update session activity
+    session_manager.update_session_activity(session_id)
+    
     # Determine which model to use
     model_to_use = None
     if request.llm_model:
@@ -140,6 +223,14 @@ async def route_request(
     elif request.llm_pref:
         model_to_use = model_resolver.get_model(request.llm_pref)
         if not model_to_use:
+            # Log error event
+            event_logger.log_request(
+                session_id=session_id,
+                text=request.text,
+                route_final=request.route,
+                success=False,
+                error_code="INVALID_MODEL_PREF"
+            )
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown model preference: {request.llm_pref}"
@@ -149,6 +240,14 @@ async def route_request(
         model_to_use = model_resolver.get_model("small")
     
     if not model_to_use:
+        # Log error event
+        event_logger.log_request(
+            session_id=session_id,
+            text=request.text,
+            route_final=request.route,
+            success=False,
+            error_code="NO_MODEL_CONFIGURED"
+        )
         raise HTTPException(
             status_code=500,
             detail="No suitable model configured"
@@ -156,43 +255,131 @@ async def route_request(
     
     # Handle different route types
     if request.route == "gen":
-        # Generation route - placeholder implementation
-        return RouteResponse(
-            status="success",
-            route_used="gen",
-            text_response=f"Generated response for: {request.text}",
-            model_used=model_to_use
-        )
+        # Generation route - call ollama
+        try:
+            response_text, latency_ms = call_ollama_generate(model_to_use, request.text)
+            
+            # Log successful event
+            event_logger.log_request(
+                session_id=session_id,
+                text=request.text,
+                route_final="gen",
+                model_used=model_to_use,
+                latency_ms=latency_ms,
+                success=True
+            )
+            
+            return RouteResponse(
+                status="success",
+                route_used="gen",
+                text_response=response_text,
+                model_used=model_to_use,
+                latency_ms=latency_ms,
+                session_id=session_id
+            )
+            
+        except HTTPException as e:
+            # Log error event
+            event_logger.log_request(
+                session_id=session_id,
+                text=request.text,
+                route_final="gen",
+                model_used=model_to_use,
+                success=False,
+                error_code="OLLAMA_ERROR"
+            )
+            raise  # Re-raise HTTP exceptions from call_ollama_generate
+            
+        except Exception as e:
+            # Log error event
+            event_logger.log_request(
+                session_id=session_id,
+                text=request.text,
+                route_final="gen",
+                model_used=model_to_use,
+                success=False,
+                error_code="UNEXPECTED_ERROR"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error during generation: {str(e)}"
+            )
     
     elif request.route == "act":
-        # Action route - placeholder implementation for M4
-        return RouteResponse(
-            status="success",
-            route_used="act",
-            text_response="Action routing not yet implemented (coming in M4)",
-            model_used=model_to_use
+        # Log not implemented event
+        event_logger.log_request(
+            session_id=session_id,
+            text=request.text,
+            route_final="act",
+            success=False,
+            error_code="NOT_IMPLEMENTED"
+        )
+        # Action route - return 501 Not Implemented
+        raise HTTPException(
+            status_code=501,
+            detail="Action routing not yet implemented (coming in M4)"
         )
     
     elif request.route == "auto":
-        # Auto routing - placeholder implementation for M3
-        # For now, use simple heuristic fallback
-        if "generate" in request.text.lower() or "write" in request.text.lower():
-            route_used = "gen"
-        else:
-            route_used = "act"
-        
-        return RouteResponse(
-            status="success",
-            route_used=route_used,
-            text_response=f"Auto-routed to {route_used}: {request.text}",
-            model_used=model_to_use,
-            _router_fallback=True
+        # Log not implemented event
+        event_logger.log_request(
+            session_id=session_id,
+            text=request.text,
+            route_final="auto",
+            success=False,
+            error_code="NOT_IMPLEMENTED"
+        )
+        # Auto routing - return 501 Not Implemented
+        raise HTTPException(
+            status_code=501,
+            detail="Auto routing not yet implemented - router support coming in M3"
         )
     
     else:
+        # Log error event
+        event_logger.log_request(
+            session_id=session_id,
+            text=request.text,
+            route_final=request.route,
+            success=False,
+            error_code="UNKNOWN_ROUTE"
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Unknown route: {request.route}"
+        )
+
+
+@app.post("/feedback")
+async def submit_feedback(
+    request: FeedbackRequest,
+    auth: bool = Depends(verify_auth)
+) -> FeedbackResponse:
+    """Submit feedback for a session/episode."""
+    
+    # Validate session exists
+    if not session_manager.session_exists(request.session_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session {request.session_id} not found"
+        )
+    
+    # Log feedback event
+    try:
+        event_logger.log_feedback(request.session_id, request.feedback)
+        
+        # Update session activity
+        session_manager.update_session_activity(request.session_id)
+        
+        return FeedbackResponse(
+            status="success",
+            message="Feedback logged successfully"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to log feedback: {str(e)}"
         )
 
 

@@ -1,0 +1,4 @@
+roles:
+  small: llama3.1:8b-instruct-q5_K_M
+  medium: qwen2.5:32b-instruct-q4_K_M
+  large: llama3.1:70b-instruct-q4_K_M
