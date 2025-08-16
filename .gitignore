@@ -4,8 +4,6 @@ __pycache__/
 .DS_Store
 bridge/logs/
 *.log
-router/*.mlmodelc/
-router/*TinyIntent*.ml*
-launchd/com.tinyintent*.plist
-data/episodes/*.db
-data/episodes/*.tgz
+router/*.mlmodel*
+*.mlmodelc
+launchd/*.plist

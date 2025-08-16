@@ -47,7 +47,7 @@
             }
         </style>
         <meta name="referrer" content="no-referrer" />
-        <script type="text/javascript" nonce="27871e80a1014278b5c51559b8c7e459">
+        <script type="text/javascript" nonce="f153cd13c8ae404f8a368de5b1effc73">
 			(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
 			(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
 			m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
@@ -64,7 +64,7 @@
                     request.open('POST', '/report', true);
                     request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
                     var url = encodeURIComponent(window.document.location);
-                    request.send(encodeURI('url=' + url + '&key=AAD4RJQ6Eg&v=2'));
+                    request.send(encodeURI('url=' + url + '&key=AAD4MErxFQ&v=2'));
                     reportLink.innerText = 'Thanks for reporting';
                     reportLink.disabled = true;
                     reportLink.onclick = null;
@@ -78,7 +78,7 @@
         
         <div class="context_spacer">
             <img height="1" width="1" style="display:none" src="https://www.quora.com/_/ad/f88319ba83cb2e40064aff2dfeaab96e/pixel" />
-			<script type="text/javascript" nonce="27871e80a1014278b5c51559b8c7e459">
+			<script type="text/javascript" nonce="f153cd13c8ae404f8a368de5b1effc73">
 				/* <![CDATA[ */
 				var google_conversion_id = 856256774;
 				var google_conversion_language = "en";
