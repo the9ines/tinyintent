@@ -7,7 +7,9 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Environment variables with defaults
-TINYINTENT_BIN="${TINYINTENT_BIN:-/Users/oberfelder/projects/smallintent/router/tinyintent}"
+# Dynamic project root detection
+PROJECT_ROOT="$(cd "$(dirname "$0")/.."; pwd -P)"
+TINYINTENT_BIN="${TINYINTENT_BIN:-$PROJECT_ROOT/router/tinyintent}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:32b-instruct-q4_K_M}"
 LOCAL_MODEL_PREF="${LOCAL_MODEL_PREF:-auto}"
 

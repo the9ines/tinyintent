@@ -31,3 +31,11 @@ jobs:
       run: |
         export SMOKE_MODE=ci
         bash tests/auth.sh
+    
+    - name: Run secrets guard
+      run: |
+        bash tests/secrets_guard.sh
+    
+    - name: Run path case check
+      run: |
+        bash tests/path_case.sh

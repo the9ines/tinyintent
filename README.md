@@ -182,6 +182,37 @@ bash scripts/doctor.sh
 
 After changes: `make bridge-stop && make bridge && make bridge-logs`
 
+## Security before testing
+
+Before deploying or testing, ensure proper security hygiene:
+
+```bash
+# 1. Rotate secret to ensure no live secrets in repo
+bash scripts/rotate_secret.sh
+
+# 2. Install pre-commit hook to prevent future secret leaks
+chmod +x dev/git-hooks/pre-commit
+ln -sf ../../dev/git-hooks/pre-commit .git/hooks/pre-commit
+
+# 3. Verify secrets guard passes
+bash tests/secrets_guard.sh
+```
+
+**Important reminders:**
+- The real plist (`launchd/com.tinyintent.tinyrpc.plist`) is git-ignored
+- Only the sample plist is tracked in git
+- Use `scripts/rotate_secret.sh` to generate new secrets safely
+
+## Paths
+
+TinyIntent uses dynamic project root detection to avoid hardcoded paths:
+
+- **Python**: `PROJECT_ROOT = Path(__file__).resolve().parents[1]`
+- **Bash**: `PROJECT_ROOT="$(cd "$(dirname "$0")/.."; pwd -P)"`
+- **Documentation standard**: `/Users/oberfelder/projects/smallintent` (lowercase `projects`)
+
+This ensures the project works regardless of installation location.
+
 ## Route Types (Router v2)
 
 - **gen**: Local generation tasks (text, summaries, explanations)

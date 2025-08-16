@@ -75,7 +75,9 @@ def main():
     print("=" * 50)
     
     # Load data from TSV (text<TAB>label, no header)
-    data_path = "/Users/oberfelder/projects/smallintent/router/data/intents.tsv"
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parents[1]
+    data_path = project_root / "router" / "data" / "intents.tsv"
     print(f"Loading data from {data_path}")
     
     df = pd.read_csv(data_path, sep='\t', header=None, names=['text', 'label'])
@@ -249,7 +251,7 @@ def main():
                 mlprog_q = mlprog
 
         # Save MLProgram and check size
-        dst_pkg = "/Users/oberfelder/projects/smallintent/router/TinyIntent.mlpackage"
+        dst_pkg = project_root / "router" / "TinyIntent.mlpackage"
         mlprog_q.save(dst_pkg)
 
         size_bytes = pkg_bytes(dst_pkg)
@@ -276,7 +278,7 @@ def main():
                 print(f"[error] NN INT8 failed: {e3}", file=sys.stderr)
                 mlnn_q = mlnn
 
-            dst_mlm = "/Users/oberfelder/projects/smallintent/router/TinyIntent.mlmodel"
+            dst_mlm = project_root / "router" / "TinyIntent.mlmodel"
             mlnn_q.save(dst_mlm)
 
             # Size-check for the .mlmodel bundle

@@ -20,12 +20,10 @@ router/tinyintent        # compiled binary
 
 # Core ML compiled bundles
 *.mlmodelc/
+router/*.mlmodelc/
 
 # Model artifacts (do NOT commit trained models)
-router/TinyIntent.mlmodel
-router/TinyIntent.mlpackage
-router/TinyIntent_iOS.mlmodel
-router/TinyIntent_iOS.mlpackage
+router/TinyIntent*.ml*
 
 # Secrets / local config
 launchd/com.tinyintent.tinyrpc.plist

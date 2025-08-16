@@ -23,14 +23,12 @@ func findModelURL() -> URL? {
     let u = URL(fileURLWithPath: override)
     if fm.fileExists(atPath: u.path) { return u }
   }
-  // Canonical lower-case path
-  let root = "/Users/oberfelder/projects/smallintent/router"
+  // Dynamic project root detection
+  let executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
+  let routerDir = executableURL.deletingLastPathComponent()
   let candidates = [
-    URL(fileURLWithPath: root).appendingPathComponent("TinyIntent.mlpackage"),
-    URL(fileURLWithPath: root).appendingPathComponent("TinyIntent.mlmodel"),
-    // Safety: if any file ended up under 'Projects' (capital P)
-    URL(fileURLWithPath: "/Users/oberfelder/Projects/smallintent/router/TinyIntent.mlpackage"),
-    URL(fileURLWithPath: "/Users/oberfelder/Projects/smallintent/router/TinyIntent.mlmodel"),
+    routerDir.appendingPathComponent("TinyIntent.mlpackage"),
+    routerDir.appendingPathComponent("TinyIntent.mlmodel"),
   ]
   for c in candidates where fm.fileExists(atPath: c.path) {
     return c

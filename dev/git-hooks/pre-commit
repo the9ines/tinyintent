@@ -1,0 +1,29 @@
+#!/bin/bash
+set -euo pipefail
+
+# Pre-commit hook to prevent secrets from being committed
+echo "Running pre-commit secrets check..."
+
+# Run secrets guard
+if ! bash tests/secrets_guard.sh; then
+    echo ""
+    echo "❌ Pre-commit hook failed: Secrets detected"
+    echo "Please fix the issues above before committing."
+    echo ""
+    echo "To install this hook:"
+    echo "  chmod +x dev/git-hooks/pre-commit"
+    echo "  ln -sf ../../dev/git-hooks/pre-commit .git/hooks/pre-commit"
+    echo ""
+    exit 1
+fi
+
+# Run path case check
+if ! bash tests/path_case.sh; then
+    echo ""
+    echo "❌ Pre-commit hook failed: Path case issues detected"
+    echo "Please fix the issues above before committing."
+    echo ""
+    exit 1
+fi
+
+echo "✅ Pre-commit checks passed"

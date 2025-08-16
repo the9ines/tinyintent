@@ -95,8 +95,49 @@ else
     echo "FAIL - Expected debug endpoint JSON with required keys, got: $DEBUG_RESPONSE"
 fi
 
-# Test 5: Valid secret (should work)
-echo -n "Test 5 (valid secret): "
+# Test 5: Dev bypass prevention with X-Forwarded-For
+echo -n "Test 5 (dev bypass X-Forwarded-For prevention): "
+
+# Store original ALLOW_DEV_LOCAL value
+ORIGINAL_DEV_LOCAL=$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:ALLOW_DEV_LOCAL" "$PLIST_PATH" 2>/dev/null || echo "0")
+
+# Temporarily set ALLOW_DEV_LOCAL=1
+/usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:ALLOW_DEV_LOCAL 1" "$PLIST_PATH" 2>/dev/null || \
+/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ALLOW_DEV_LOCAL string 1" "$PLIST_PATH"
+
+# Restart bridge
+make bridge-stop >/dev/null 2>&1 || true
+make bridge >/dev/null 2>&1
+sleep 2
+
+# Test request with X-Forwarded-For header (should be rejected even in dev mode)
+RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
+    -H "Content-Type: application/json" \
+    -H "X-Forwarded-For: 1.2.3.4" \
+    -d '{"text":"test","route":"local_only"}' || echo '{"error":"connection_failed"}')
+
+# Restore original ALLOW_DEV_LOCAL
+if [[ "$ORIGINAL_DEV_LOCAL" == "0" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:ALLOW_DEV_LOCAL 0" "$PLIST_PATH" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ALLOW_DEV_LOCAL string 0" "$PLIST_PATH"
+else
+    /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:ALLOW_DEV_LOCAL $ORIGINAL_DEV_LOCAL" "$PLIST_PATH"
+fi
+
+# Restart bridge again
+make bridge-stop >/dev/null 2>&1 || true
+make bridge >/dev/null 2>&1
+sleep 2
+
+# Check if response indicates unauthorized (should be rejected due to X-Forwarded-For)
+if echo "$RESPONSE" | grep -q '"error":"unauthorized"'; then
+    echo "PASS"
+else
+    echo "FAIL - X-Forwarded-For bypass prevention failed, got: $RESPONSE"
+fi
+
+# Test 6: Valid secret (should work)
+echo -n "Test 6 (valid secret): "
 RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
     -H "Content-Type: application/json" \
     -H "X-TinyIntent-Secret: $CURRENT_SECRET" \

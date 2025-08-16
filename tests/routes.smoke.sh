@@ -321,7 +321,8 @@ log_test "Bridge hardening: 413 payload too large"
 if command -v curl >/dev/null && pgrep -f tinyrpc.py >/dev/null; then
     # Generate payload larger than MAX_BODY_KB (32KB default)
     large_text=$(printf "A%.0s" {1..35000})
-    secret=$(cat "/Users/oberfelder/projects/smallintent/launchd/com.tinyintent.tinyrpc.sample.plist" | grep -A1 TINYINTENT_SECRET | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/' || echo "test-secret")
+    PROJECT_ROOT="$(cd "$(dirname "$0")/.."; pwd -P)"
+    secret=$(cat "$PROJECT_ROOT/launchd/com.tinyintent.tinyrpc.sample.plist" | grep -A1 TINYINTENT_SECRET | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/' || echo "test-secret")
     
     response=$(curl -s -w "HTTP_STATUS:%{http_code}" -X POST http://127.0.0.1:8787/route \
         -H "Content-Type: application/json" -H "X-TinyIntent-Secret: $secret" \

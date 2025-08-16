@@ -4,6 +4,7 @@ from typing import Dict, Any
 from flask import Flask, request, jsonify
 from collections import defaultdict
 import re
+from pathlib import Path
 from bridge.resolve import resolve_ollama_path
 
 # Router v2 labels
@@ -13,15 +14,18 @@ MAX_TEXT = 8192
 MAX_CONTENT_LENGTH = 40000
 
 SECRET = os.getenv("TINYINTENT_SECRET")
+# Dynamic project root detection
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 PORT = int(os.getenv("TINYINTENT_PORT", "8787"))
 BIND = os.getenv("TINYINTENT_BIND", "127.0.0.1")
 ALLOW_LAN = os.getenv("ALLOW_LAN", "0") == "1"
-BIN = os.getenv("TINYINTENT_BIN", "/Users/oberfelder/projects/smallintent/router/tinyintent")
-AGENT = os.getenv("NEURO_AGENT", "/Users/oberfelder/projects/smallintent/agent/neuro_agent")
+BIN = os.getenv("TINYINTENT_BIN", str(PROJECT_ROOT / "router" / "tinyintent"))
+AGENT = os.getenv("NEURO_AGENT", str(PROJECT_ROOT / "agent" / "neuro_agent"))
 DRY = os.getenv("TINYINTENT_DRYRUN", "0") == "1"
 DOUBLE_CHECK = os.getenv("DOUBLE_CHECK", "0") == "1"
 FORCE_IPHONE = os.getenv("FORCE_IPHONE", "0") == "1"
-LOG_PATH = os.getenv("LOG_PATH", "/Users/oberfelder/projects/smallintent/bridge/logs/tinyrpc.log")
+LOG_PATH = os.getenv("LOG_PATH", str(PROJECT_ROOT / "bridge" / "logs" / "tinyrpc.log"))
 
 # New M4.1 environment variables
 TAILSCALE_ONLY = os.getenv("TAILSCALE_ONLY", "0") == "1"
@@ -212,6 +216,8 @@ def healthz():
         "uptime_s": uptime_s,
         "version": version,
         "build_sha": build_sha,
+        "bind_host": BIND,
+        "bind_port": PORT,
         "tailscale_only": TAILSCALE_ONLY,
         "rate_limit_rps": int(RATE_LIMIT_RPS),
         "max_body_kb": MAX_BODY_KB,
@@ -319,10 +325,20 @@ def check_auth(remote_addr: str) -> tuple[bool, str, str]:
     if not secret:
         return False, "secret_not_configured", ""
     
-    # Check for dev bypass (localhost only)
+    # Check for dev bypass (localhost only, with strict validation)
     if ALLOW_DEV_LOCAL and is_localhost_ip(remote_addr):
-        if not header_value:  # No header provided, but dev bypass allows it
-            return True, "dev_bypass", "dev_bypass"
+        if not header_value:  # No header provided, check if truly local
+            # Additional hardening checks
+            forwarded_for = request.headers.get("X-Forwarded-For")
+            host_header = request.headers.get("Host", "").lower()
+            
+            # Only allow if no X-Forwarded-For and Host is localhost-like
+            if (forwarded_for is None and 
+                (host_header.startswith("localhost") or 
+                 host_header.startswith("127.0.0.1") or 
+                 host_header.startswith("::1") or
+                 host_header.split(':')[0] in ["localhost", "127.0.0.1", "::1"])):
+                return True, "dev_bypass", "dev_bypass"
     
     # Check if header is missing/empty
     if not header_value:
@@ -533,5 +549,6 @@ def route():
 
 if __name__ == "__main__":
     sanity_check()
-    log_line(f"starting bind={BIND} port={PORT} dry={1 if DRY else 0} tailscale_only={TAILSCALE_ONLY} rate_limit={RATE_LIMIT_RPS} max_body_kb={MAX_BODY_KB}")
+    log_line(f"listening host={BIND} port={PORT} (tailscale_only={1 if TAILSCALE_ONLY else 0})")
+    log_line(f"config: dry={1 if DRY else 0} rate_limit={RATE_LIMIT_RPS} max_body_kb={MAX_BODY_KB}")
     app.run(host=BIND, port=PORT)

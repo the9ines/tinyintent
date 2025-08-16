@@ -18,9 +18,9 @@ import coremltools as ct
 import pickle
 from pathlib import Path
 
-
 # Configuration
-OUTPUT_PATH = '/Users/oberfelder/projects/smallintent/router/TinyIntent.mlpackage'
+PROJECT_ROOT = Path(__file__).resolve().parents[1] 
+OUTPUT_PATH = PROJECT_ROOT / 'router' / 'TinyIntent.mlpackage'
 
 
 def load_and_validate_tsv(file_path):
@@ -227,7 +227,7 @@ def main():
     print("=" * 50)
     
     # Load and validate data
-    tsv_path = "/Users/oberfelder/projects/smallintent/router/data/intents.tsv"
+    tsv_path = PROJECT_ROOT / "router" / "data" / "intents.tsv"
     df = load_and_validate_tsv(tsv_path)
     
     # Prepare data

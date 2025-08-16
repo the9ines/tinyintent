@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 import os, shutil, sys, subprocess
+from pathlib import Path
 
-ROOT = "/Users/oberfelder/projects/smallintent"
-SRC_PACKAGE = os.path.join(ROOT, "router", "TinyIntent.mlpackage")
-SRC_MODEL = os.path.join(ROOT, "router", "TinyIntent.mlmodel")
+ROOT = Path(__file__).resolve().parents[1]
+SRC_PACKAGE = ROOT / "router" / "TinyIntent.mlpackage"
+SRC_MODEL = ROOT / "router" / "TinyIntent.mlmodel"
 
 def main():
     # Try .mlpackage first, then fall back to .mlmodel
-    if os.path.exists(SRC_PACKAGE):
+    if SRC_PACKAGE.exists():
         src = SRC_PACKAGE
-        dst = os.path.join(ROOT, "router", "TinyIntent_iOS.mlpackage")
-    elif os.path.isfile(SRC_MODEL):
+        dst = ROOT / "router" / "TinyIntent_iOS.mlpackage"
+    elif SRC_MODEL.exists():
         src = SRC_MODEL
-        dst = os.path.join(ROOT, "router", "TinyIntent_iOS.mlmodel")
+        dst = ROOT / "router" / "TinyIntent_iOS.mlmodel"
     else:
         print(f"[export_ios_model] missing: {SRC_PACKAGE} or {SRC_MODEL}", file=sys.stderr)
         sys.exit(1)

@@ -8,6 +8,7 @@ import coremltools as ct
 import numpy as np
 from coremltools.models import MLModel
 import coremltools.proto.Model_pb2 as Model_pb2
+from pathlib import Path
 
 def create_placeholder_model():
     """Create a minimal Core ML text classifier"""
@@ -54,7 +55,8 @@ def main():
     
     try:
         model = create_placeholder_model()
-        output_path = "/Users/oberfelder/projects/smallintent/router/TinyIntent.mlmodel"
+        project_root = Path(__file__).resolve().parents[1]
+        output_path = project_root / "router" / "TinyIntent.mlmodel"
         model.save(output_path)
         print(f"Placeholder model saved to: {output_path}")
         
@@ -69,7 +71,8 @@ def main():
         print("For M2 testing, we'll create a simple file placeholder")
         
         # Create a simple file placeholder for testing (uses .mlmodel format)
-        output_path = "/Users/oberfelder/projects/smallintent/router/TinyIntent.mlmodel"
+        project_root = Path(__file__).resolve().parents[1]
+        output_path = project_root / "router" / "TinyIntent.mlmodel"
         with open(output_path, 'w') as f:
             f.write("# Placeholder Core ML model for M2 testing\n")
         print(f"Created file placeholder at: {output_path}")
