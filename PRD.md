@@ -1,164 +1,200 @@
-# TinyIntent — PRD v2.0 (Local-Only)
+# TinyIntent M0 — Product Requirements Document
 
-**Audience:** Senior ICs & PM  
-**Author:** TinyIntent Team (v2.0 local-only refactor)  
-**Status:** Final  
+**Version:** 2.0 (M0 Fresh Boot)  
+**Status:** Local-Only Baseline  
+**Author:** Claude Code  
 
 ## 1. Overview & Goals
 
-**TinyIntent v2**: Local-only AI routing agent for safe automation of Mac/VPS runbooks with zero external dependencies.
-
-**New for v1.5:**  
-Supports **iPhone Shortcut flow** where the phone listens to your voice, runs the same TinyIntent DistilBERT classifier **on-device**, and sends a small `{text, route}` payload to the Mac via secure HTTP (LAN or Tailscale). The Mac's `neuro_agent` then executes the request with the proper backend.
+TinyIntent M0 is a minimal, production-grade local baseline for routing voice/text inputs to local LLM generation or action previews. This is a dramatically simplified version focused on core functionality.
 
 ### Primary Goals
 
-- **Offline-First Routing** via ANE-optimized DistilBERT classifier
-- **Flawless v1 flow** for:
-  - Local Mac CLI input
-  - Remote iPhone voice input via Shortcut → Mac bridge
-- **Reliable "Hands"**: Local model execution via Ollama
-- **Reproducibility**: Deterministic builds via `Makefile`
+- **Local-Only Operation**: Zero cloud dependencies or network calls
+- **Binary Classification**: `gen` (generation) vs `act` (action preview)
+- **Phone Integration**: iPhone Shortcut → Mac bridge via LAN/Tailscale
+- **Production Ready**: Authentication, health checks, service management
 
-## 2. Personas
+## 2. Core Routes (v2 Simplified)
 
-- **Local Dev**: offline code summaries
-- **Voice-First User**: speaks into iPhone, wants auto-routing & execution on Mac
-- **Privacy-Sensitive User**: refine & execute locally
+### 2.1 Generation Route (`gen`)
+- **Purpose**: Text generation via local Ollama
+- **Models**: qwen2.5:32b-instruct-q4_K_M → llama3.1:8b-instruct-q5_K_M (fallback)
+- **Response**: `{"text": "...", "model": "...", "latency_ms": 123}`
+- **Privacy**: `local_only`
 
-## 3. Functional Requirements
+### 2.2 Action Route (`act`)  
+- **Purpose**: Action planning preview (NO execution)
+- **Response**: `{"action": "preview", "params": {...}, "summary": "...", "confirm_required": true}`
+- **Execution**: None (preview only for M0)
 
-### 3.1 Router: `TinyIntent.mlmodel` (or TinyIntent.mlpackage)
+### 2.3 Auto Route (`auto`)
+- **Purpose**: Automatic classification to `gen` or `act`
+- **Method**: Router binary if available, fallback to keyword heuristics
+- **Heuristics**: Action keywords (restart, tail, start, stop, logs, errors) → `act`, else → `gen`
 
-- Backbone: ANE-optimized DistilBERT (PyTorch → Core ML, <5MB, 8-bit quantized)
-- Input: raw text
-- Output: `gen` | `act` (Router v2 labels)
-
-### 3.2 Trainer: `router/train_intent.py`
-
-- Reads `router/data/intents.tsv` (text<TAB>label)
-- 90/10 split, prints accuracy + confusion matrix
-- Quantize + optimize for ANE
-- Export to `router/TinyIntent.mlmodel` (or TinyIntent.mlpackage)
-
-### 3.3 Runtime (M2): `router/TinyIntentMain.swift`
-
-- Loads `.mlmodel` (or `.mlpackage`) from `router/`
-- `MLModelConfiguration.computeUnits = .cpuAndNeuralEngine`
-- CLI usage: `tinyintent "your prompt"` OR stdin
-- Prints predicted label to stdout; errors to stderr
-
-### 3.4 Hands: `agent/neuro_agent` (bash)
-
-- Routes label:
-  - `gen`: Local generation via Ollama
-  - `act`: Action planning with preview via Ollama
-- Fallback order:
-  1. `qwen2.5:32b-instruct-q4_K_M`
-  2. `llama3.1:8b-instruct-q5_K_M`
-  3. exit
-- `--dry-run`: show plan only
-
-### 3.5 iPhone Shortcut Flow (v1, required)
-
-- **Shortcut (on iPhone)**  
-  1) Dictate Text (on‑device)  
-  2) Run Core ML Model (TinyIntent **iOS** DistilBERT export) → one of:
-     `gen`, `act`, or automatic classification  
-  3) POST `{text, route}` to the Mac bridge endpoint with header `X-TinyIntent-Secret: <secret>`
-
-- **Mac Bridge (`tinyrpc`)**  
-  - Minimal HTTP server (Flask)  
-  - Default bind: `127.0.0.1:8787` (local only)  
-  - Optional LAN/Tailscale via `TINYINTENT_BIND=0.0.0.0`  
-  - Requires `X-TinyIntent-Secret` header; rejects if missing/invalid  
-  - Validates payload (text ≤ 8192 chars; label in whitelist)  
-  - Invokes `agent/neuro_agent` (or `--dry-run` if `TINYINTENT_DRYRUN=1`)  
-  - Logs one compact line per request to stderr and to `bridge/logs/tinyrpc.log`
-
-- **Security**  
-  - Shared secret header required  
-  - Label whitelist enforced  
-  - Size caps on input  
-  - LAN/Tailscale exposure **opt‑in** via env vars
-
-- **Optional Double‑Check**  
-  - If `DOUBLE_CHECK=1`, Mac re‑classifies with `router/tinyintent` and may override iPhone route unless `FORCE_IPHONE=1`.
-
-## 4. Non-Functional Requirements
-
-- Router latency: <10ms p50
-- iPhone Shortcut end-to-end: <2s
-- `.mlmodel` size: <5 MB
-- Clean, readable errors
-- Reproducible with `make`
-
-## 5. Data
-
-- 60+ labeled examples, 20 per class
-- Favor `gen` for ambiguous cases
-
-## 6. Security & Privacy
-
-- No outbound calls - all processing local-only
-- Shared secret auth for iPhone→Mac POST
-- Logs to `~/.agent_sessions/`
-
-## 7. Ops
-
-- `Makefile`:
-  - `make train`: train/export PyTorch → Core ML
-  - `make build`: build Swift runtime
-  - `make test`: run runtime on samples
-  - `make agent`: run full agent
-  - `make clean`: clean artifacts
-  - `make ios-model` — export iOS‑targeted `.mlmodel` for Shortcuts  
-  - `make bridge-venv` — create Python venv and install Flask  
-  - `make bridge` — start `tinyrpc` via **launchd**  
-  - `make bridge-stop` — stop `tinyrpc`  
-  - `make bridge-logs` — tail bridge logs  
-  - `make iphone-test` — cURL a sample POST to bridge
-- Routes log to `stderr`
-
-## 8. Architecture
+## 3. Architecture
 
 ```
-[iPhone Voice]   [Mac CLI]
-↓              ↓
-[iPhone Shortcut (DistilBERT Core ML)]
-↓
-[POST {text, route}]
-↓
-[tinyrpc.py] → [neuro_agent]
-↓
-[Mac ANE runtime check] (optional second classify)
-↓
-[Local Ollama Execution]
-↓
-[stdout]
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  iPhone Voice   │    │   TinyIntent     │    │   Local LLM     │
+│     Shortcut    │───▶│     Bridge      │───▶│     Ollama      │
+└─────────────────┘    │  (Flask/8787)   │    │  qwen2.5:32b   │
+                       │                  │    │  llama3.1:8b   │
+┌─────────────────┐    │  Authentication  │    └─────────────────┘
+│   CLI Helper    │───▶│  Health Checks   │    
+│    bin/ti       │    │  Route Logic     │    ┌─────────────────┐
+└─────────────────┘    └──────────────────┘    │ Action Preview  │
+                                               │ (No Execution)  │
+                                               └─────────────────┘
 ```
 
-## 9. Risks
+## 4. Components
 
-- Terminal quirks on blank line submit
-- Model misroutes → dataset bias
-- Ollama errors → handle gracefully
+### 4.1 Bridge (`bridge/tinyrpc.py`)
+- **Framework**: Flask
+- **Binding**: `TINYINTENT_BIND` (default: 127.0.0.1, configurable to 0.0.0.0)
+- **Port**: `TINYINTENT_PORT` (default: 8787)
+- **Endpoints**:
+  - `GET /healthz` → Status, uptime, version (no auth required)
+  - `GET /readyz` → Dependency checks (no auth required)  
+  - `POST /route` → Main routing endpoint (auth required)
 
-## 10. Milestones
+### 4.2 Authentication
+- **Method**: `X-TinyIntent-Secret` header
+- **Config**: `TINYINTENT_SECRET` in launchd plist
+- **Error Codes**: `missing_header`, `secret_not_configured`, `mismatch`
+- **Dev Bypass**: `ALLOW_DEV_LOCAL=1` for localhost (default: off)
 
-- M1: PyTorch training + export (done)
-- M2: Swift ANE runtime + neuro_agent
-- M3: iPhone Shortcut + Mac bridge
-- M4: TUI integration (v2)
+### 4.3 CLI Helper (`bin/ti`)
+- **Usage**: `echo "text" | bin/ti -r auto --json`
+- **Options**: `-r/--route`, `-m/--message`, `--json`, `--host`, `--port`
+- **Auth**: Reads secret from plist automatically
 
-## 11. Success
+### 4.4 Service Management
+- **Method**: launchd via `launchd/com.tinyintent.tinyrpc.plist`
+- **Bootstrap**: `bash scripts/bootstrap_fresh.sh`
+- **Lifecycle**: `make bridge`, `make bridge-stop`, `make bridge-logs`
 
-- ≥85% router accuracy
-- >95% valid response rate
-- <1% crash rate
+## 5. Environment Configuration
 
-## 12. Acceptance Criteria
+Set in `launchd/com.tinyintent.tinyrpc.plist`:
 
-- `make clean && make train && make build && make test` works
-- `.mlmodel` <5 MB
-- TUI supports model switching + dry runs (v2)
+```
+TINYINTENT_BIND=0.0.0.0           # Phone access
+TINYINTENT_PORT=8787              # Service port
+TINYINTENT_SECRET=<24-char>       # Auth secret
+OLLAMA_BIN=/opt/homebrew/bin/ollama
+LOCAL_MODEL_PREF=auto             # auto|8b|32b|70b
+PATH=/usr/local/bin:/usr/bin:/bin
+```
+
+## 6. iPhone Integration
+
+### 6.1 Shortcut Configuration
+- **URL**: `http://<LAN_IP>:8787/route`
+- **Method**: POST
+- **Headers**: 
+  - `Content-Type: application/json`
+  - `X-TinyIntent-Secret: <SECRET>`
+- **Body**: `{"text": "[DICTATED_TEXT]", "route": "auto"}`
+
+### 6.2 Network Access
+- **LAN**: Direct IP access when on same network
+- **Tailscale**: Global access via Tailscale overlay network
+- **Security**: All requests require secret header
+
+## 7. Testing & Validation
+
+### 7.1 Health Checks
+```bash
+bash tests/health.sh       # /healthz and /readyz endpoints
+bash tests/auth.sh         # Authentication flows
+bash tests/bind.sh         # Port/binding configuration
+bash tests/routes.smoke.sh # Route functionality
+```
+
+### 7.2 Manual Testing
+```bash
+# CLI testing
+echo "summarize quantum computing" | bin/ti -r gen
+echo "restart nginx service" | bin/ti -r act --json
+
+# Direct curl testing  
+curl -H "X-TinyIntent-Secret: $SECRET" \
+     -H "Content-Type: application/json" \
+     -d '{"text":"test","route":"auto"}' \
+     http://127.0.0.1:8787/route
+```
+
+## 8. Error Handling
+
+### 8.1 HTTP Status Codes
+- **200**: Success
+- **400**: Invalid input (bad JSON, missing text, invalid route)
+- **401**: Authentication failure
+- **500**: Server error (Ollama unavailable, model failure)
+
+### 8.2 Dependency Failures
+```json
+{
+  "error": "missing_dependency",
+  "dep": "ollama",
+  "code": "not_found", 
+  "tried": ["/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"],
+  "hint": "Set OLLAMA_BIN or extend PATH in launchd plist"
+}
+```
+
+## 9. Security Model
+
+### 9.1 Local-Only Operation
+- **No Cloud Calls**: All LLM inference via local Ollama
+- **No Data Upload**: Text never leaves local machine
+- **Privacy**: `privacy: "local_only"` in all responses
+
+### 9.2 Authentication
+- **Shared Secret**: 24-character alphanumeric string
+- **Rotation**: `bash scripts/rotate_secret.sh`
+- **Storage**: launchd plist (git-ignored)
+
+### 9.3 Network Security
+- **Default Binding**: 127.0.0.1 (localhost only)
+- **Phone Access**: Requires explicit 0.0.0.0 binding
+- **No TLS**: Assumed secure network (LAN/Tailscale)
+
+## 10. Operational Requirements
+
+### 10.1 Dependencies
+- **Python 3.8+**: Flask runtime
+- **Ollama**: Local LLM models
+- **macOS**: launchd service management
+- **curl/jq**: Testing tools
+
+### 10.2 Performance
+- **Bridge Latency**: <100ms for routing decisions
+- **LLM Response**: 2-60s depending on model/query
+- **Health Checks**: <10ms response time
+
+### 10.3 Resource Usage
+- **Memory**: ~50MB bridge + Ollama model memory
+- **Disk**: Minimal (logs rotate)
+- **Network**: LAN-only traffic for phone integration
+
+## 11. Future Considerations (Out of Scope for M0)
+
+- **Action Execution**: M0 provides preview only
+- **Model Training**: Router binary assumed present
+- **Advanced Auth**: OAuth, API keys, rate limiting
+- **TLS/HTTPS**: Currently plain HTTP
+- **Multi-User**: Single-user design
+
+## 12. Success Criteria
+
+- ✅ **2-Minute Setup**: Bootstrap script completes successfully
+- ✅ **iPhone Integration**: Voice dictation → Mac execution  
+- ✅ **Local Privacy**: Zero external network calls
+- ✅ **Production Ready**: Service starts, health checks pass
+- ✅ **Test Coverage**: All test suites pass
+
+This M0 baseline provides the foundation for more advanced features while maintaining simplicity and reliability.

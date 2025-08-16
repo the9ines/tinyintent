@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# TinyIntent CLI helper - posts to the bridge with secret from plist
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Default config
+PORT="${TINYINTENT_PORT:-8787}"
+HOST="127.0.0.1"
+ROUTE="auto"
+JSON_OUTPUT=false
+MESSAGE=""
+
+# Usage function
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS] [MESSAGE]
+
+OPTIONS:
+    -r, --route ROUTE    Route type: auto|gen|act (default: auto)
+    -m, --message TEXT   Message text
+    -p, --port PORT      Port number (default: 8787)
+    -h, --host HOST      Host address (default: 127.0.0.1)
+    --json               Output JSON only
+    --help               Show this help
+
+EXAMPLES:
+    echo "summarize tinyintent" | $0 -r auto --json
+    $0 -m "restart the service" -r act
+    $0 --route gen --message "explain quantum computing"
+
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -r|--route)
+            ROUTE="$2"
+            shift 2
+            ;;
+        -m|--message)
+            MESSAGE="$2"
+            shift 2
+            ;;
+        -p|--port)
+            PORT="$2"
+            shift 2
+            ;;
+        -h|--host)
+            HOST="$2"
+            shift 2
+            ;;
+        --json)
+            JSON_OUTPUT=true
+            shift
+            ;;
+        --help)
+            usage
+            exit 0
+            ;;
+        *)
+            if [[ -z "$MESSAGE" ]]; then
+                MESSAGE="$1"
+            else
+                echo "Error: Unexpected argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Get message from stdin if not provided
+if [[ -z "$MESSAGE" ]]; then
+    if [[ -t 0 ]]; then
+        echo "Error: No message provided and stdin is a terminal" >&2
+        usage >&2
+        exit 1
+    fi
+    MESSAGE=$(cat)
+fi
+
+# Validate route
+if [[ ! "$ROUTE" =~ ^(auto|gen|act)$ ]]; then
+    echo "Error: Invalid route '$ROUTE'. Must be auto, gen, or act." >&2
+    exit 1
+fi
+
+# Get secret from plist
+PLIST_PATH="$PROJECT_ROOT/launchd/com.tinyintent.tinyrpc.plist"
+if [[ ! -f "$PLIST_PATH" ]]; then
+    echo "Error: Plist not found at $PLIST_PATH" >&2
+    echo "Run: bash scripts/bootstrap_fresh.sh" >&2
+    exit 1
+fi
+
+SECRET=$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_SECRET" "$PLIST_PATH" 2>/dev/null || echo "")
+if [[ -z "$SECRET" ]]; then
+    echo "Error: TINYINTENT_SECRET not found in plist" >&2
+    echo "Run: bash scripts/bootstrap_fresh.sh" >&2
+    exit 1
+fi
+
+# Build URL
+URL="http://${HOST}:${PORT}/route"
+
+# Build JSON payload
+PAYLOAD=$(jq -n \
+    --arg text "$MESSAGE" \
+    --arg route "$ROUTE" \
+    '{text: $text, route: $route}')
+
+# Make request
+if ! command -v curl >/dev/null; then
+    echo "Error: curl not available" >&2
+    exit 1
+fi
+
+RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -H "X-TinyIntent-Secret: $SECRET" \
+    -d "$PAYLOAD" \
+    "$URL" 2>/dev/null || echo "HTTPSTATUS:000")
+
+BODY=$(echo "$RESPONSE" | sed -E 's/HTTPSTATUS:[0-9]{3}$//')
+STATUS=$(echo "$RESPONSE" | grep -o "HTTPSTATUS:[0-9]*" | cut -d: -f2)
+
+# Handle response
+if [[ "$STATUS" != "200" ]]; then
+    echo "Error: HTTP $STATUS" >&2
+    if command -v jq >/dev/null && echo "$BODY" | jq -e . >/dev/null 2>&1; then
+        echo "$BODY" | jq -r '.error // .message // .' >&2
+    else
+        echo "$BODY" >&2
+    fi
+    exit 1
+fi
+
+# Output result
+if [[ "$JSON_OUTPUT" == "true" ]]; then
+    echo "$BODY"
+else
+    if command -v jq >/dev/null && echo "$BODY" | jq -e . >/dev/null 2>&1; then
+        # Pretty print if it's JSON
+        if echo "$BODY" | jq -e '.text' >/dev/null 2>&1; then
+            # Gen response
+            echo "$BODY" | jq -r '.text'
+        elif echo "$BODY" | jq -e '.action' >/dev/null 2>&1; then
+            # Act preview response
+            echo "Action Preview:"
+            echo "$BODY" | jq -r '.summary'
+            echo "Confirmation required: $(echo "$BODY" | jq -r '.confirm_required')"
+        else
+            # Other JSON response
+            echo "$BODY" | jq .
+        fi
+    else
+        echo "$BODY"
+    fi
+fi

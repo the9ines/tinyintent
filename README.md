@@ -1,237 +1,162 @@
-# TinyIntent Router v2
+# TinyIntent M0 — Fresh Boot
 
-Local-first AI routing agent with binary gen/act classification. Zero external dependencies.
+Minimal, production-grade local baseline that starts, binds on 0.0.0.0 (configurable), authenticates via header, resolves Ollama reliably under launchd, and supports `auto|gen|act` with a preview-only ACT flow.
 
-## Quick Start
-
-```bash
-# Build the project
-make build
-
-# Test the agent
-echo "summarize this code locally" | agent/neuro_agent
-
-# Run with structured logging
-echo "research quantum cryptography" | agent/neuro_agent --json
-
-# Test all routes
-make test
-```
-
-## What You'll See When It Runs
-
-### Human-Readable Feedback (stderr)
-When you run TinyIntent, you'll see a one-liner summary like this:
-
-```
-route=local_only model=qwen2.5:32b-instruct-q4_K_M tokens_in=45 tokens_out=127 latency_ms=2341 privacy=local_only
-```
-
-### Structured JSON Logs (stdout with --json)
-For automation and monitoring, use `--json` flag to get structured output:
-
-```json
-{
-  "timestamp": "2025-01-15T10:30:45.123Z",
-  "route": "local_only",
-  "model_name": "qwen2.5:32b-instruct-q4_K_M",
-  "model_size": "32B",
-  "tokens_in": 45,
-  "tokens_out": 127,
-  "duration_ms": 2341,
-  "privacy_mode": "local_only",
-  "reclassified": false,
-  "source": "neuro_agent",
-  "dry_run": false
-}
-```
-
-## Usage Examples
-
-### Direct Command Line
-```bash
-# Local-only processing (privacy-first)
-echo "summarize this code locally" | agent/neuro_agent
-
-# Action planning tasks
-echo "research quantum cryptography with citations" | agent/neuro_agent
-
-# Multi-step planning with larger models
-echo "brainstorm comprehensive project plan" | agent/neuro_agent
-```
-
-### With Options
-```bash
-# JSON logging mode
-agent/neuro_agent --json < input.txt
-
-# Quiet mode (minimal output)
-agent/neuro_agent --quiet "quick question"
-
-# Dry run (show plan without execution)
-agent/neuro_agent --dry-run "test input"
-
-# Override route classification
-ROUTE=local_only agent/neuro_agent "force local processing"
-
-# Model size preference (8b/32b/70b/auto)
-LOCAL_MODEL_PREF=70b agent/neuro_agent "complex mathematical proof"
-LOCAL_MODEL_PREF=8b agent/neuro_agent "quick summary"
-
-# Auto selection (default): ≤300 tokens→8B, 301-1200→32B, >1200→70B
-# Keywords like "theorem", "proof", "chain-of-thought" bump to 70B
-```
-
-### iPhone Shortcut Integration
-TinyIntent supports voice input via iPhone Shortcuts that POST to the Mac bridge:
+## 2-Minute Quickstart
 
 ```bash
-# Start the bridge service
-make bridge
-
-# Test the bridge endpoint
-make iphone-test
+git checkout -b reboot/m0-fresh-boot
+bash scripts/bootstrap_fresh.sh
+bash tests/health.sh
+echo "summarize tinyintent" | bin/ti -r auto --json
 ```
 
-### Remote via Tailscale (M4.1)
-TinyIntent supports worldwide access via Tailscale overlay network:
+## What You Get
+
+- **Bridge**: Flask app on 0.0.0.0:8787 with authentication
+- **Routes**: `gen` (local LLM), `act` (preview only), `auto` (classification)
+- **CLI**: `bin/ti` helper for testing
+- **Health**: `/healthz` and `/readyz` endpoints
+- **Tests**: Complete test suite for validation
+
+## iPhone Shortcut Setup
+
+After bootstrap, get connection info:
 
 ```bash
-# iPhone calls Mac from anywhere in the world
-# Endpoint: http://<TAILSCALE-IP>:8787/route
-# Example: http://100.64.1.5:8787/route
-
-# Required: X-TinyIntent-Secret header for authentication
-curl -H "X-TinyIntent-Secret: your-secret-here" \
-     -H "Content-Type: application/json" \
-     -d '{"text":"test from remote","route":"local_only"}' \
-     http://100.64.1.5:8787/route
-
-# Security controls (environment variables):
-# TAILSCALE_ONLY=1     - Only accept Tailscale IPs (100.64.0.0/10)
-# RATE_LIMIT_RPS=3     - Max requests per second per IP
-# MAX_BODY_KB=32       - Request size limit in KB
-
-# Enhanced logging includes:
-# - remote_addr: Source IP address
-# - tailscale: boolean (true for 100.64.0.0/10 IPs)
-# - allowed: boolean (passed security checks)
-# - body_size_kb: Request payload size
+bash scripts/print_urls_and_secret.sh
 ```
 
-## Health & Readiness
+Configure iPhone Shortcut:
+- **URL**: `http://<LAN_IP>:8787/route`
+- **Header**: `X-TinyIntent-Secret: <SECRET>`
+- **Body**: `{"text":"[DICTATED_TEXT]","route":"auto"}`
 
-Monitor the bridge service with JSON health endpoints:
+## Architecture
 
-```bash
-# Health check (always returns 200 if service is up)
-curl http://127.0.0.1:8787/healthz | jq .
-
-# Readiness check (200 when all local checks pass, 503 otherwise)
-curl http://127.0.0.1:8787/readyz | jq .
+```
+[iPhone Voice] → [Auto Classification] → [gen: Local LLM | act: Preview Only]
+[Mac CLI]      → [TinyIntent Bridge]  → [Ollama qwen2.5:32b / llama3.1:8b]
 ```
 
-The readiness endpoint checks environment variables, router binary availability, and Ollama presence. Useful for deployment automation and CI/CD pipelines.
+## Routes
+
+- **`gen`**: Text generation via Ollama (fallback: qwen2.5:32b → llama3.1:8b)
+- **`act`**: Action preview only (`confirm_required: true`)  
+- **`auto`**: Router binary classification, fallback to heuristics
 
 ## Authentication
 
-The bridge service requires authentication via the `X-TinyIntent-Secret` header:
+All routes require `X-TinyIntent-Secret` header except `/healthz` and `/readyz`.
 
 ```bash
-# All requests to /route must include the secret header
-curl -H "X-TinyIntent-Secret: your-secret-here" \
+# Get secret
+/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_SECRET" launchd/com.tinyintent.tinyrpc.plist
+
+# Test with curl
+curl -H "X-TinyIntent-Secret: <SECRET>" \
      -H "Content-Type: application/json" \
-     -d '{"text":"test message","route":"local_only"}' \
+     -d '{"text":"test message","route":"gen"}' \
      http://127.0.0.1:8787/route
 ```
 
-**Secret Management:**
-- Rotate secrets with: `bash scripts/rotate_secret.sh`
-- Secrets are stored in `launchd/com.tinyintent.tinyrpc.plist`
-- Use PlistBuddy to view: `/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_SECRET" launchd/com.tinyintent.tinyrpc.plist`
+## Environment Variables
 
-**Development Mode** (localhost only):
+Set in `launchd/com.tinyintent.tinyrpc.plist`:
+
 ```bash
-# Enable dev bypass for localhost requests without auth (default: off)
-export ALLOW_DEV_LOCAL=1
+TINYINTENT_BIND=0.0.0.0     # Bind address (default: 127.0.0.1)
+TINYINTENT_PORT=8787        # Port (default: 8787)
+TINYINTENT_SECRET=<secret>  # Required auth secret
+OLLAMA_BIN=/path/to/ollama  # Ollama binary path
+LOCAL_MODEL_PREF=auto       # Model preference: auto|8b|32b|70b
 ```
 
-When `ALLOW_DEV_LOCAL=1`, requests from 127.0.0.1 or ::1 bypass authentication. This setting only applies to localhost and never affects remote connections.
+## Testing
 
-## If you see 'missing_dependency: ollama'
+```bash
+# Health checks
+bash tests/health.sh
+bash tests/auth.sh
+bash tests/bind.sh
+bash tests/routes.smoke.sh
 
-The bridge service requires `ollama` to be accessible. If you get a 500 error with `"error":"missing_dependency"`, use the doctor script:
+# CLI helper
+echo "explain quantum computing" | bin/ti -r gen
+echo "restart the service" | bin/ti -r act --json
+```
 
+## Configuration
+
+The bridge binds to 0.0.0.0 by default for phone access. For localhost-only:
+
+```bash
+/usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:TINYINTENT_BIND 127.0.0.1" launchd/com.tinyintent.tinyrpc.plist
+make bridge-stop && make bridge
+```
+
+## Troubleshooting
+
+**If you see `router_classification_failed: rc=...`**:
+```bash
+make build
+rm -rf router/*.mlmodelc
+make train
+make router-doctor
+```
+- `rc=2` usually means "model missing or not readable"
+- Ensure Xcode Command Line Tools are installed: `xcode-select --install`
+
+**Missing Ollama dependency**:
 ```bash
 bash scripts/doctor.sh
 ```
 
-**Two ways to fix:**
-
-1. **Set OLLAMA_BIN** (recommended):
-   ```bash
-   # Add explicit path to plist
-   /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OLLAMA_BIN string /opt/homebrew/bin/ollama" launchd/com.tinyintent.tinyrpc.plist
-   ```
-
-2. **Extend PATH** in plist:
-   ```bash
-   # Update PATH to include ollama location
-   /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:PATH /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" launchd/com.tinyintent.tinyrpc.plist
-   ```
-
-After changes: `make bridge-stop && make bridge && make bridge-logs`
-
-## Security before testing
-
-Before deploying or testing, ensure proper security hygiene:
-
+**Service not starting**:
 ```bash
-# 1. Rotate secret to ensure no live secrets in repo
-bash scripts/rotate_secret.sh
-
-# 2. Install pre-commit hook to prevent future secret leaks
-chmod +x dev/git-hooks/pre-commit
-ln -sf ../../dev/git-hooks/pre-commit .git/hooks/pre-commit
-
-# 3. Verify secrets guard passes
-bash tests/secrets_guard.sh
+make bridge-logs
 ```
 
-**Important reminders:**
-- The real plist (`launchd/com.tinyintent.tinyrpc.plist`) is git-ignored
-- Only the sample plist is tracked in git
-- Use `scripts/rotate_secret.sh` to generate new secrets safely
-
-## Paths
-
-TinyIntent uses dynamic project root detection to avoid hardcoded paths:
-
-- **Python**: `PROJECT_ROOT = Path(__file__).resolve().parents[1]`
-- **Bash**: `PROJECT_ROOT="$(cd "$(dirname "$0")/.."; pwd -P)"`
-- **Documentation standard**: `/Users/oberfelder/projects/smallintent` (lowercase `projects`)
-
-This ensures the project works regardless of installation location.
-
-## Route Types (Router v2)
-
-- **gen**: Local generation tasks (text, summaries, explanations)
-- **act**: Action planning with preview (multi-step tasks, research)
-- **auto**: Automatic classification (default)
-
-All routes execute locally with `privacy: local_only`.
+**Authentication issues**:
+```bash
+bash scripts/rotate_secret.sh
+```
 
 ## Development
 
 ```bash
-# Run smoke tests
-bash tests/routes.smoke.sh
+# Build router (if needed)
+make build
 
-# Build and test
-make clean && make build && make test
+# Bridge lifecycle
+make bridge-stop
+make bridge
+make bridge-logs
 
-# Clean artifacts
-make clean
+# Update secret
+bash scripts/rotate_secret.sh
 ```
 
-For detailed setup and development instructions, see [PRD.md](PRD.md).
+## Security
+
+- Authentication required via `X-TinyIntent-Secret` header
+- Local-only operation (no cloud calls)
+- Real plist with secrets is git-ignored
+- Secret rotation via `scripts/rotate_secret.sh`
+
+## File Structure
+
+```
+smallintent/
+├── bin/ti                          # CLI helper
+├── bridge/
+│   ├── tinyrpc.py                 # Flask bridge (simplified)
+│   └── resolve.py                 # Ollama resolver
+├── scripts/
+│   ├── bootstrap_fresh.sh         # Complete setup
+│   └── print_urls_and_secret.sh   # Connection info
+├── tests/                         # Test suite
+└── launchd/                       # Service configuration
+```
+
+This is the minimal M0 baseline. For advanced features, see [PRD.md](PRD.md).

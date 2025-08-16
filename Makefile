@@ -1,4 +1,4 @@
-.PHONY: train build test agent clean ios-model bridge-venv bridge bridge-stop bridge-logs iphone-test
+.PHONY: train build test agent clean ios-model bridge-venv bridge bridge-stop bridge-logs iphone-test doctor router-doctor router-smoke
 
 # M1 Targets (Training Pipeline)
 train:
@@ -90,7 +90,52 @@ bridge-logs:
 # Test bridge with cURL
 iphone-test:
 	@echo "[iphone-test] sending sample POST to bridge..."
-	@curl -sS -X POST http://127.0.0.1:8787/route \
+	@SECRET=$$(if [ -f "$(LAUNCHD_PLIST)" ]; then /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_SECRET" "$(LAUNCHD_PLIST)" 2>/dev/null || echo "test-secret"; else echo "test-secret"; fi) && \
+	curl -sS -X POST http://127.0.0.1:8787/route \
 		-H "Content-Type: application/json" \
-		-H "X-TinyIntent-Secret: tinyintent-secure-bridge-2024" \
-		-d '{"text":"local summarization please","route":"local_only"}' | sed 's/.*/[bridge] &/'
+		-H "X-TinyIntent-Secret: $$SECRET" \
+		-d '{"text":"local summarization please","route":"gen"}' | sed 's/.*/[bridge] &/'
+
+# Doctor: check dependencies and environment
+doctor:
+	@echo "[doctor] TinyIntent M0 dependency check..."
+	@echo
+	@echo "=== Python Environment ==="
+	@python3 --version || echo "❌ Python 3 not found"
+	@echo
+	@echo "=== Ollama Detection ==="
+	@python3 -c "import sys; sys.path.append('bridge'); from resolve import resolve_ollama_path, check_ollama_ok; path, tried = resolve_ollama_path(); print(f'Ollama path: {path or \"NOT FOUND\"}'); print(f'Tried: {tried}'); ok, msg = check_ollama_ok(path) if path else (False, 'not found'); print(f'Status: {\"✅ OK\" if ok else \"❌ \" + msg}')"
+	@echo
+	@echo "=== Environment Variables (from plist) ==="
+	@if [ -f "$(LAUNCHD_PLIST)" ]; then \
+		echo "Secret configured: $$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_SECRET" "$(LAUNCHD_PLIST)" 2>/dev/null | sed 's/.*/.../g' || echo '❌ Not set')"; \
+		echo "Bind: $$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_BIND" "$(LAUNCHD_PLIST)" 2>/dev/null || echo 'default')"; \
+		echo "Port: $$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:TINYINTENT_PORT" "$(LAUNCHD_PLIST)" 2>/dev/null || echo 'default')"; \
+		echo "Ollama bin: $$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:OLLAMA_BIN" "$(LAUNCHD_PLIST)" 2>/dev/null || echo 'not set')"; \
+	else \
+		echo "❌ Plist not found at $(LAUNCHD_PLIST)"; \
+		echo "Run: bash scripts/bootstrap_fresh.sh"; \
+	fi
+	@echo
+	@echo "=== Service Status ==="
+	@if launchctl list | grep -q com.tinyintent.tinyrpc; then \
+		echo "✅ Bridge service loaded"; \
+	else \
+		echo "❌ Bridge service not loaded"; \
+	fi
+	@echo
+	@echo "=== Bridge Health ==="
+	@if curl -s http://127.0.0.1:8787/healthz >/dev/null 2>&1; then \
+		echo "✅ Bridge responding on port 8787"; \
+	else \
+		echo "❌ Bridge not responding"; \
+	fi
+
+# Router diagnosis and testing
+router-doctor:
+	@echo "[router-doctor] Running router diagnostics..."
+	@bash scripts/router_doctor.sh
+
+router-smoke:
+	@echo "[router-smoke] Running router smoke tests..."
+	@bash tests/router_smoke.sh

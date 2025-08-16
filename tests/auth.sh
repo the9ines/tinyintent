@@ -25,7 +25,7 @@ WRONG_SECRET="${CURRENT_SECRET}wrong"
 RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
     -H "Content-Type: application/json" \
     -H "X-TinyIntent-Secret: $WRONG_SECRET" \
-    -d '{"text":"test","route":"local_only"}' || echo '{"error":"connection_failed"}')
+    -d '{"text":"test","route":"gen"}' || echo '{"error":"connection_failed"}')
 
 if echo "$RESPONSE" | grep -q '"code":"mismatch"'; then
     echo "PASS"
@@ -37,7 +37,7 @@ fi
 echo -n "Test 2 (missing header): "
 RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
     -H "Content-Type: application/json" \
-    -d '{"text":"test","route":"local_only"}' || echo '{"error":"connection_failed"}')
+    -d '{"text":"test","route":"gen"}' || echo '{"error":"connection_failed"}')
 
 if echo "$RESPONSE" | grep -q '"code":"missing_header"' || echo "$RESPONSE" | grep -q '"code":"secret_not_configured"'; then
     echo "PASS"
@@ -63,7 +63,7 @@ sleep 2
 # Test request without header (should pass due to dev bypass)
 RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
     -H "Content-Type: application/json" \
-    -d '{"text":"test","route":"local_only"}' || echo '{"error":"connection_failed"}')
+    -d '{"text":"test","route":"gen"}' || echo '{"error":"connection_failed"}')
 
 # Restore original ALLOW_DEV_LOCAL
 if [[ "$ORIGINAL_DEV_LOCAL" == "0" ]]; then
@@ -85,14 +85,17 @@ else
     echo "PASS"
 fi
 
-# Test 4: Debug endpoint from localhost
-echo -n "Test 4 (debug endpoint): "
-DEBUG_RESPONSE=$(curl -s "$BASE_URL/debug/authz" || echo '{"error":"connection_failed"}')
+# Test 4: Valid secret (should work)
+echo -n "Test 4 (valid secret): "
+RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
+    -H "Content-Type: application/json" \
+    -H "X-TinyIntent-Secret: $CURRENT_SECRET" \
+    -d '{"text":"test","route":"gen"}' || echo '{"error":"connection_failed"}')
 
-if echo "$DEBUG_RESPONSE" | grep -q '"client_ip"' && echo "$DEBUG_RESPONSE" | grep -q '"has_header"' && echo "$DEBUG_RESPONSE" | grep -q '"would_allow"'; then
-    echo "PASS"
+if echo "$RESPONSE" | grep -q '"error":"unauthorized"'; then
+    echo "FAIL - Valid secret was rejected, got: $RESPONSE"
 else
-    echo "FAIL - Expected debug endpoint JSON with required keys, got: $DEBUG_RESPONSE"
+    echo "PASS"
 fi
 
 # Test 5: Dev bypass prevention with X-Forwarded-For
@@ -114,7 +117,7 @@ sleep 2
 RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
     -H "Content-Type: application/json" \
     -H "X-Forwarded-For: 1.2.3.4" \
-    -d '{"text":"test","route":"local_only"}' || echo '{"error":"connection_failed"}')
+    -d '{"text":"test","route":"gen"}' || echo '{"error":"connection_failed"}')
 
 # Restore original ALLOW_DEV_LOCAL
 if [[ "$ORIGINAL_DEV_LOCAL" == "0" ]]; then
@@ -136,17 +139,5 @@ else
     echo "FAIL - X-Forwarded-For bypass prevention failed, got: $RESPONSE"
 fi
 
-# Test 6: Valid secret (should work)
-echo -n "Test 6 (valid secret): "
-RESPONSE=$(curl -s -X POST "$BASE_URL/route" \
-    -H "Content-Type: application/json" \
-    -H "X-TinyIntent-Secret: $CURRENT_SECRET" \
-    -d '{"text":"test","route":"local_only"}' || echo '{"error":"connection_failed"}')
-
-if echo "$RESPONSE" | grep -q '"error":"unauthorized"'; then
-    echo "FAIL - Valid secret was rejected, got: $RESPONSE"
-else
-    echo "PASS"
-fi
 
 echo "=== Auth Tests Complete ==="

@@ -28,6 +28,9 @@ router/TinyIntent*.ml*
 # Secrets / local config
 launchd/com.tinyintent.tinyrpc.plist
 
+# Testing artifacts
+/tmp/tinyintent-*
+
 # Editor junk
 .vscode/
 .idea/

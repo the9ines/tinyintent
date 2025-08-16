@@ -1,77 +1,43 @@
 #!/usr/bin/env python3
-import os, sys, json, time, subprocess, hashlib, ipaddress
+import os
+import sys
+import json
+import time
+import subprocess
+import hashlib
+import ipaddress
 from typing import Dict, Any
 from flask import Flask, request, jsonify
-from collections import defaultdict
-import re
 from pathlib import Path
-from bridge.resolve import resolve_ollama_path
 
-# Router v2 labels
-ROUTER_V2_LABELS = {"gen", "act"}
-LABELS = {"plan_then_local", "local_only"}  # Keep for internal compatibility
-MAX_TEXT = 8192
-MAX_CONTENT_LENGTH = 40000
-
-SECRET = os.getenv("TINYINTENT_SECRET")
-# Dynamic project root detection
+# Add project root to Python path for imports
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
+from bridge.resolve import resolve_ollama_path, check_ollama_ok
+
+# Configuration
+SECRET = os.getenv("TINYINTENT_SECRET")
 PORT = int(os.getenv("TINYINTENT_PORT", "8787"))
 BIND = os.getenv("TINYINTENT_BIND", "127.0.0.1")
-ALLOW_LAN = os.getenv("ALLOW_LAN", "0") == "1"
 BIN = os.getenv("TINYINTENT_BIN", str(PROJECT_ROOT / "router" / "tinyintent"))
 AGENT = os.getenv("NEURO_AGENT", str(PROJECT_ROOT / "agent" / "neuro_agent"))
 DRY = os.getenv("TINYINTENT_DRYRUN", "0") == "1"
-DOUBLE_CHECK = os.getenv("DOUBLE_CHECK", "0") == "1"
+LOCAL_MODEL_PREF = os.getenv("LOCAL_MODEL_PREF", "auto")
+DOUBLE_CHECK = os.getenv("DOUBLE_CHECK", "1") == "1"
 FORCE_IPHONE = os.getenv("FORCE_IPHONE", "0") == "1"
-LOG_PATH = os.getenv("LOG_PATH", str(PROJECT_ROOT / "bridge" / "logs" / "tinyrpc.log"))
-
-# New M4.1 environment variables
+ALLOW_DEV_LOCAL = os.getenv("ALLOW_DEV_LOCAL", "0") == "1"
 TAILSCALE_ONLY = os.getenv("TAILSCALE_ONLY", "0") == "1"
 RATE_LIMIT_RPS = float(os.getenv("RATE_LIMIT_RPS", "3"))
 MAX_BODY_KB = int(os.getenv("MAX_BODY_KB", "32"))
 
-# M10.4 auth environment variables
-ALLOW_DEV_LOCAL = os.getenv("ALLOW_DEV_LOCAL", "0") == "1"
+MAX_TEXT = 8192
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_BODY_KB * 1024
 
 # Record start time for uptime calculation
 START_MONO = time.monotonic()
-
-# Simple token bucket rate limiter
-class RateLimiter:
-    def __init__(self, rate: float):
-        self.rate = rate
-        self.buckets = defaultdict(lambda: {"tokens": rate, "last_refill": time.time()})
-    
-    def allow(self, key: str) -> bool:
-        now = time.time()
-        bucket = self.buckets[key]
-        
-        # Refill bucket based on elapsed time
-        elapsed = now - bucket["last_refill"]
-        bucket["tokens"] = min(self.rate, bucket["tokens"] + elapsed * self.rate)
-        bucket["last_refill"] = now
-        
-        # Check if request is allowed
-        if bucket["tokens"] >= 1.0:
-            bucket["tokens"] -= 1.0
-            return True
-        return False
-
-rate_limiter = RateLimiter(RATE_LIMIT_RPS)
-
-def is_tailscale_ip(ip: str) -> bool:
-    """Check if IP is in Tailscale range 100.64.0.0/10"""
-    try:
-        ip_obj = ipaddress.ip_address(ip)
-        tailscale_net = ipaddress.ip_network("100.64.0.0/10")
-        return ip_obj in tailscale_net
-    except ValueError:
-        return False
 
 def is_localhost_ip(ip: str) -> bool:
     """Check if IP is localhost (127.0.0.1 or ::1)"""
@@ -84,37 +50,10 @@ def is_localhost_ip(ip: str) -> bool:
 def log_line(msg: str) -> None:
     line = f"[tinyrpc] {time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
     print(line, file=sys.stderr, flush=True)
-    try:
-        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "a") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
 
 def error(status: int, message: str):
     log_line(f"err status={status} msg={message!r}")
     return jsonify({"error": message}), status
-
-def sanity_check():
-    # Fatal checks at startup
-    if not SECRET or SECRET == "CHANGE_ME_SECRET":
-        log_line("fatal: TINYINTENT_SECRET not set or still placeholder")
-        sys.stderr.write("TINYINTENT_SECRET required and must not be CHANGE_ME_SECRET\n")
-        sys.stderr.flush()
-        os._exit(1)
-    
-    # Network binding security
-    if BIND == "0.0.0.0" and not ALLOW_LAN:
-        log_line("fatal: TINYINTENT_BIND=0.0.0.0 requires ALLOW_LAN=1")
-        sys.stderr.write("TINYINTENT_BIND=0.0.0.0 requires ALLOW_LAN=1\n")
-        sys.stderr.flush()
-        os._exit(1)
-    
-    # Warnings for missing binaries
-    if not os.path.isfile(BIN):
-        log_line(f"warn: classifier not found at {BIN}")
-    if not os.path.isfile(AGENT):
-        log_line(f"warn: neuro_agent not found at {AGENT}")
 
 def read_version_sha():
     """Read version and git SHA for health endpoints"""
@@ -123,8 +62,8 @@ def read_version_sha():
     
     # Try to read VERSION file
     try:
-        version_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "VERSION")
-        if os.path.isfile(version_path):
+        version_path = PROJECT_ROOT / "VERSION"
+        if version_path.is_file():
             with open(version_path, 'r') as f:
                 version = f.read().strip()
     except Exception:
@@ -137,7 +76,7 @@ def read_version_sha():
             capture_output=True,
             text=True,
             timeout=3,
-            cwd=os.path.dirname(os.path.dirname(__file__))
+            cwd=PROJECT_ROOT
         )
         if proc.returncode == 0:
             build_sha = proc.stdout.strip()
@@ -153,33 +92,12 @@ def env_ok():
         if not SECRET or SECRET == "CHANGE_ME_SECRET":
             return False
         
-        # Check boolean flags
-        dry_run = os.getenv("TINYINTENT_DRYRUN", "0")
-        if dry_run not in {"0", "1"}:
-            return False
-        
-        double_check = os.getenv("DOUBLE_CHECK", "0")
-        if double_check not in {"0", "1"}:
-            return False
-        
-        force_iphone = os.getenv("FORCE_IPHONE", "0")
-        if force_iphone not in {"0", "1"}:
-            return False
-        
-        tailscale_only = os.getenv("TAILSCALE_ONLY", "0")
-        if tailscale_only not in {"0", "1"}:
-            return False
-        
         # Check model preference
-        local_model_pref = os.getenv("LOCAL_MODEL_PREF", "auto")
-        if local_model_pref not in {"auto", "8b", "32b", "70b"}:
+        if LOCAL_MODEL_PREF not in {"auto", "8b", "32b", "70b"}:
             return False
         
         # Check numeric values
-        if RATE_LIMIT_RPS <= 0:
-            return False
-        
-        if MAX_BODY_KB <= 0:
+        if RATE_LIMIT_RPS <= 0 or MAX_BODY_KB <= 0:
             return False
         
         return True
@@ -196,15 +114,8 @@ def ollama_ok():
     if not ollama_path:
         return False
     
-    try:
-        proc = subprocess.run(
-            [ollama_path, "--version"],
-            capture_output=True,
-            timeout=3
-        )
-        return proc.returncode == 0
-    except Exception:
-        return False
+    ok, _ = check_ollama_ok(ollama_path)
+    return ok
 
 @app.get("/healthz")
 def healthz():
@@ -216,12 +127,10 @@ def healthz():
         "uptime_s": uptime_s,
         "version": version,
         "build_sha": build_sha,
-        "bind_host": BIND,
-        "bind_port": PORT,
         "tailscale_only": TAILSCALE_ONLY,
         "rate_limit_rps": int(RATE_LIMIT_RPS),
         "max_body_kb": MAX_BODY_KB,
-        "local_model_pref": os.getenv("LOCAL_MODEL_PREF", "auto")
+        "local_model_pref": LOCAL_MODEL_PREF
     })
 
 @app.get("/readyz")
@@ -255,63 +164,9 @@ def readyz():
     
     return jsonify(response), 200 if ready else 503
 
-@app.get("/debug/authz")
-def debug_authz():
-    remote_addr = request.remote_addr or "unknown"
-    
-    # Only allow localhost
-    if not is_localhost_ip(remote_addr):
-        return jsonify({"error": "forbidden"}), 403
-    
+def check_auth(remote_addr: str) -> tuple[bool, str]:
+    """Check authentication for the request. Returns (allowed, reason)"""
     # Get secret from environment
-    secret = os.getenv("TINYINTENT_SECRET", "").strip()
-    
-    # Get header (case-insensitive) and trim whitespace
-    header_value = ""
-    for key, value in request.headers:
-        if key.lower() == "x-tinyintent-secret":
-            header_value = value.strip()
-            break
-    
-    has_header = bool(header_value)
-    header_len = len(header_value)
-    secret_configured = bool(secret)
-    expected_len = len(secret) if secret_configured else None
-    
-    # Determine if request would be allowed and reason
-    would_allow = False
-    reason = ""
-    
-    if not secret_configured:
-        reason = "secret_not_configured"
-    elif ALLOW_DEV_LOCAL and is_localhost_ip(remote_addr) and not header_value:
-        would_allow = True
-        reason = "dev_bypass"
-    elif not header_value:
-        reason = "missing_header"
-    elif header_value != secret:
-        reason = "mismatch"
-    else:
-        would_allow = True
-        reason = "secret_ok"
-    
-    return jsonify({
-        "client_ip": remote_addr,
-        "has_header": has_header,
-        "header_len": header_len,
-        "secret_configured": secret_configured,
-        "expected_len": expected_len,
-        "allow_dev_local": ALLOW_DEV_LOCAL,
-        "would_allow": would_allow,
-        "reason": reason
-    })
-
-def check_auth(remote_addr: str) -> tuple[bool, str, str]:
-    """
-    Check authentication for the request.
-    Returns (allowed, reason, auth_mode)
-    """
-    # Get secret from environment on each request (no caching)
     secret = os.getenv("TINYINTENT_SECRET", "").strip()
     
     # Get header (case-insensitive) and trim whitespace
@@ -323,11 +178,11 @@ def check_auth(remote_addr: str) -> tuple[bool, str, str]:
     
     # Check if secret is configured
     if not secret:
-        return False, "secret_not_configured", ""
+        return False, "secret_not_configured"
     
-    # Check for dev bypass (localhost only, with strict validation)
+    # Check for dev bypass (localhost only)
     if ALLOW_DEV_LOCAL and is_localhost_ip(remote_addr):
-        if not header_value:  # No header provided, check if truly local
+        if not header_value:  # No header provided
             # Additional hardening checks
             forwarded_for = request.headers.get("X-Forwarded-For")
             host_header = request.headers.get("Host", "").lower()
@@ -338,18 +193,18 @@ def check_auth(remote_addr: str) -> tuple[bool, str, str]:
                  host_header.startswith("127.0.0.1") or 
                  host_header.startswith("::1") or
                  host_header.split(':')[0] in ["localhost", "127.0.0.1", "::1"])):
-                return True, "dev_bypass", "dev_bypass"
+                return True, "dev_bypass"
     
     # Check if header is missing/empty
     if not header_value:
-        return False, "missing_header", ""
+        return False, "missing_header"
     
     # Check if header matches secret
     if header_value != secret:
-        return False, "mismatch", ""
+        return False, "mismatch"
     
     # Success with secret
-    return True, "secret_ok", "secret"
+    return True, "secret_ok"
 
 @app.before_request
 def validate_request():
@@ -359,7 +214,7 @@ def validate_request():
     
     # Auth check for all other endpoints
     remote_addr = request.remote_addr or "unknown"
-    allowed, reason, auth_mode = check_auth(remote_addr)
+    allowed, reason = check_auth(remote_addr)
     
     if not allowed:
         log_line(f"allowed=false reason={reason}")
@@ -385,31 +240,10 @@ def validate_request():
             }), 401
         else:  # missing_header
             return jsonify({"error": "unauthorized", "code": "missing_header"}), 401
-    else:
-        log_line(f"allowed=true auth_mode={auth_mode}")
-    
-    # Content-Type validation
-    if request.method == "POST" and request.content_type != "application/json":
-        return error(415, "Content-Type must be application/json")
-    
-    # Content-Length validation  
-    if request.content_length and request.content_length > MAX_BODY_KB * 1024:
-        return error(413, "payload_too_large")
 
 @app.post("/route")
 def route():
     remote_addr = request.remote_addr or "unknown"
-    tailscale = is_tailscale_ip(remote_addr)
-    
-    # Tailscale-only check
-    if TAILSCALE_ONLY and not tailscale:
-        log_line(f"remote_addr={remote_addr} tailscale={tailscale} allowed=false status=err msg=tailscale_required")
-        return error(403, "tailscale_required")
-    
-    # Rate limiting
-    if not rate_limiter.allow(remote_addr):
-        log_line(f"remote_addr={remote_addr} tailscale={tailscale} allowed=false status=err msg=rate_limited")
-        return error(429, "rate_limited")
 
     # Parse JSON
     try:
@@ -422,70 +256,53 @@ def route():
     text = str(payload.get("text", "") or "").strip()
     route_label = str(payload.get("route", "auto") or "auto").strip()
     
-    body_size_kb = len(text.encode('utf-8')) / 1024
     text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]
 
     if not text or len(text) > MAX_TEXT:
         return error(400, "text missing or too long")
-    
-    mapped_from = None
-    
-    # Handle route classification and pattern-based legacy mapping
+
+    # Handle route classification
+    router_fallback = None
     if route_label == "auto":
-        # Call router binary to classify into gen/act
-        if os.path.isfile(BIN):
+        # Try router binary first
+        if router_ok():
             try:
                 proc = subprocess.run([BIN], input=text, text=True, capture_output=True, timeout=30)
                 if proc.returncode == 0:
                     route_label = proc.stdout.strip()
-                    if route_label not in ROUTER_V2_LABELS:
-                        log_line(f"router_classification_invalid: {route_label} -> gen")
-                        route_label = "gen"
+                    if route_label not in {"gen", "act"}:
+                        log_line(f"router_classification_invalid: {route_label} -> heuristic")
+                        route_label = "auto"  # Reset to trigger heuristic
                 else:
-                    log_line(f"router_classification_failed: rc={proc.returncode} -> gen")
-                    route_label = "gen"
+                    # Detailed logging for failed router
+                    bytes_out = len(proc.stdout)
+                    bytes_err = len(proc.stderr)
+                    reason = proc.stderr.split('\n')[0] if proc.stderr.strip() else 'unknown'
+                    log_line(f"[router] rc={proc.returncode} bytes_out={bytes_out} bytes_err={bytes_err} reason={reason}")
+                    router_fallback = {"rc": proc.returncode, "reason": reason, "mode": "heuristic"}
+                    route_label = "auto"  # Reset to trigger heuristic
             except Exception as e:
-                log_line(f"router_classification_error: {e} -> gen")
-                route_label = "gen"
-        else:
-            log_line(f"router_binary_missing: {BIN} -> gen")
-            route_label = "gen"
-    
-    # Pattern-based legacy mapping (avoid literal tokens)
-    elif route_label not in ROUTER_V2_LABELS:
-        original_route = route_label
-        if re.match(r'^send_', route_label, re.IGNORECASE):
-            route_label = "gen"
-            mapped_from = original_route
-            log_line(f"legacy_pattern_mapping: {original_route} -> gen")
-        elif re.match(r'^plan_then_', route_label, re.IGNORECASE):
-            route_label = "act"
-            mapped_from = original_route
-            log_line(f"legacy_pattern_mapping: {original_route} -> act")
-        else:
-            return error(400, f"invalid route label: {route_label}")
-
-    orig_label = route_label
-    iphone_label = route_label
-    mac_label = None
-    
-    # Optional double-check on Mac
-    if DOUBLE_CHECK and os.path.isfile(BIN):
-        try:
-            proc = subprocess.run([BIN], input=text, text=True, capture_output=True, timeout=30)
-            if proc.returncode == 0:
-                mac_label = proc.stdout.strip()
-                if mac_label in LABELS and mac_label != route_label and not FORCE_IPHONE:
-                    route_label = mac_label
-                    log_line(f"double_check mismatch: iphone={iphone_label} mac={mac_label} chosen={route_label}")
-                elif mac_label not in LABELS:
-                    log_line(f"double_check invalid mac_label={mac_label!r}; using iphone={orig_label}")
+                log_line(f"router_classification_error: {e} -> heuristic")
+                router_fallback = {"rc": -1, "reason": str(e), "mode": "heuristic"}
+                route_label = "auto"  # Reset to trigger heuristic
+        
+        # If still auto (router missing/failed/invalid), use heuristic
+        if route_label == "auto":
+            if not router_ok():
+                log_line(f"router_binary_missing: {BIN} -> heuristic")
+                router_fallback = {"rc": -1, "reason": "binary_missing", "mode": "heuristic"}
+            # Fallback heuristic: action keywords -> act, else gen
+            action_keywords = ["restart", "tail", "sell", "start", "stop", "logs", "errors", "run", "execute", "deploy", "build"]
+            if any(keyword in text.lower() for keyword in action_keywords):
+                route_label = "act"
             else:
-                log_line(f"double_check classifier error rc={proc.returncode}")
-        except Exception as e:
-            log_line(f"double_check exception: {e}")
+                route_label = "gen"
 
-    # Resolve ollama path before calling agent
+    # Validate route
+    if route_label not in {"gen", "act"}:
+        return error(400, f"invalid route label: {route_label}")
+
+    # Resolve ollama path
     ollama_path, tried_paths = resolve_ollama_path()
     log_line(f"deps.ollama_path={ollama_path or 'none'} tried={len(tried_paths)}")
     
@@ -495,60 +312,68 @@ def route():
             "dep": "ollama", 
             "code": "not_found",
             "tried": tried_paths,
-            "hint": "Set OLLAMA_BIN to the full path or update PATH in launchd plist."
+            "hint": "Set OLLAMA_BIN or extend PATH in launchd plist"
         }), 500
 
-    # Build agent command
-    args = [AGENT]
-    if DRY:
-        args.append("--dry-run")
+    # Handle act route as preview-only
+    if route_label == "act":
+        # Return preview JSON without execution
+        response = {
+            "action": "preview",
+            "params": {"text": text[:100] + "..." if len(text) > 100 else text},
+            "summary": f"Would execute action based on: '{text[:50]}{'...' if len(text) > 50 else ''}'",
+            "confirm_required": True
+        }
+        if router_fallback:
+            response["_router_fallback"] = router_fallback
+        return jsonify(response), 200
 
-    # Build environment with route, source, and remote context
-    env = dict(os.environ)
-    # Map Router v2 labels to agent-compatible ones
-    agent_route = "local_only" if route_label == "gen" else "plan_then_local" if route_label == "act" else route_label
-    env["ROUTE"] = agent_route
-    env["TEXT_SOURCE"] = "iphone"
-    env["REMOTE_ADDR"] = remote_addr
-    env["TAILSCALE"] = "true" if tailscale else "false"
-    env["BODY_SIZE_KB"] = str(int(body_size_kb))
-    env["OLLAMA_BIN"] = ollama_path
+    # Handle gen route with Ollama
+    if route_label == "gen":
+        try:
+            # Simple Ollama call for local generation
+            models = ["qwen2.5:32b-instruct-q4_K_M", "llama3.1:8b-instruct-q5_K_M"]
+            for model in models:
+                try:
+                    start_time = time.time()
+                    proc = subprocess.run([
+                        ollama_path, "run", model, text
+                    ], capture_output=True, text=True, timeout=60)
+                    
+                    if proc.returncode == 0:
+                        latency_ms = int((time.time() - start_time) * 1000)
+                        response_text = proc.stdout.strip()
+                        
+                        # Log success
+                        log_line(f"remote_addr={remote_addr} len={len(text)} hash={text_hash} route={route_label} model={model} latency_ms={latency_ms} privacy=local_only")
+                        
+                        response = {
+                            "text": response_text,
+                            "model": model,
+                            "latency_ms": latency_ms
+                        }
+                        if router_fallback:
+                            response["_router_fallback"] = router_fallback
+                        return jsonify(response), 200
+                except Exception as e:
+                    log_line(f"model {model} failed: {e}")
+                    continue
+            
+            # All models failed
+            return error(500, "all local models failed")
+            
+        except Exception as e:
+            return error(500, f"generation failed: {e}")
 
-    # Call agent with route and text
-    try:
-        agent = subprocess.run(args, input=text, text=True, capture_output=True, timeout=60, env=env)
-    except Exception as e:
-        return error(500, f"agent failed: {e}")
-
-    ok = agent.returncode == 0
-    status = "ok" if ok else "err"
-    allowed = True
-    
-    log_line(f"remote_addr={remote_addr} tailscale={tailscale} len={len(text)} hash={text_hash} route={route_label} body_size_kb={int(body_size_kb)} allowed={allowed} dry={1 if DRY else 0} status={status} privacy=local_only")
-
-    if not ok:
-        return error(500, agent.stderr.strip() or "agent error")
-
-    # Build response with optional double-check info
-    response = {
-        "ok": True,
-        "route_label": route_label,
-        "stdout": agent.stdout,
-        "privacy": "local_only"
-    }
-    
-    if mapped_from:
-        response["mapped_from"] = mapped_from
-    
-    if DOUBLE_CHECK and mac_label:
-        response["iphone_route"] = iphone_label
-        response["mac_route"] = mac_label
-        response["chosen_route"] = route_label
-
-    return jsonify(response), 200
+    return error(400, "invalid route")
 
 if __name__ == "__main__":
-    sanity_check()
-    log_line(f"listening host={BIND} port={PORT} (tailscale_only={1 if TAILSCALE_ONLY else 0})")
-    log_line(f"config: dry={1 if DRY else 0} rate_limit={RATE_LIMIT_RPS} max_body_kb={MAX_BODY_KB}")
+    # Startup checks
+    if not SECRET or SECRET == "CHANGE_ME_SECRET":
+        log_line("fatal: TINYINTENT_SECRET not set or still placeholder")
+        sys.stderr.write("TINYINTENT_SECRET required and must not be CHANGE_ME_SECRET\n")
+        sys.stderr.flush()
+        os._exit(1)
+    
+    log_line(f"listening host={BIND} port={PORT}")
     app.run(host=BIND, port=PORT)
