@@ -7,6 +7,7 @@ Manages the lifecycle of sandboxed helpers for action execution.
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -41,6 +42,66 @@ def load_env_file():
 
 # Load .env file on module import
 load_env_file()
+
+
+def sanitize_env(env_dict: Dict[str, str]) -> Dict[str, str]:
+    """
+    Sanitize environment dictionary by redacting sensitive keys.
+    
+    This function prevents secrets from being exposed in logs, errors, or responses
+    by replacing values of sensitive environment variables with "****".
+    
+    Args:
+        env_dict: Dictionary of environment variables
+        
+    Returns:
+        Dictionary with sensitive values redacted
+    """
+    if not isinstance(env_dict, dict):
+        return env_dict
+    
+    # Define sensitive key patterns (case-insensitive)
+    sensitive_patterns = [
+        r'.*_key$',          # *_KEY
+        r'.*_secret$',       # *_SECRET  
+        r'.*password.*',     # *PASSWORD*
+        r'.*token.*',        # *TOKEN*
+        r'.*auth.*',         # *AUTH*
+        r'.*credential.*',   # *CREDENTIAL*
+        r'.*passphrase.*',   # *PASSPHRASE*
+        r'.*private.*',      # *PRIVATE*
+        r'.*cert.*',         # *CERT*
+        r'.*api_key.*',      # *API_KEY*
+        r'.*secret_key.*',   # *SECRET_KEY*
+        r'.*access_key.*',   # *ACCESS_KEY*
+    ]
+    
+    # Compile patterns for efficiency
+    compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in sensitive_patterns]
+    
+    sanitized = {}
+    for key, value in env_dict.items():
+        # Check if key matches any sensitive pattern
+        is_sensitive = any(pattern.match(key) for pattern in compiled_patterns)
+        
+        if is_sensitive:
+            sanitized[key] = "****"
+        else:
+            sanitized[key] = value
+    
+    return sanitized
+
+# Import audit logger (M6.2) - with fallback for standalone helper usage
+try:
+    import sys
+    bridge_path = Path(__file__).parent.parent / "bridge"
+    if str(bridge_path) not in sys.path:
+        sys.path.append(str(bridge_path))
+    from logs.rotate import get_audit_logger
+    AUDIT_LOGGER_AVAILABLE = True
+except ImportError:
+    AUDIT_LOGGER_AVAILABLE = False
+    get_audit_logger = None
 
 
 class SandboxViolationError(Exception):
@@ -235,7 +296,7 @@ class HelperSandbox:
             raise e
     
     def _log_sandbox_violation(self, violation_type: str, message: str, details: Dict[str, Any]):
-        """Log sandbox violation to audit log."""
+        """Log sandbox violation to audit log with integrity chaining."""
         timestamp = datetime.utcnow().isoformat() + 'Z'
         
         audit_entry = {
@@ -249,8 +310,13 @@ class HelperSandbox:
         }
         
         try:
-            with open(self.audit_log_path, 'a') as f:
-                f.write(json.dumps(audit_entry) + '\n')
+            if AUDIT_LOGGER_AVAILABLE and get_audit_logger:
+                # Use integrity audit logger if available
+                get_audit_logger().log_entry(audit_entry)
+            else:
+                # Fallback to direct file writing for standalone usage
+                with open(self.audit_log_path, 'a') as f:
+                    f.write(json.dumps(audit_entry) + '\n')
         except Exception:
             # Don't fail the entire operation if audit logging fails
             pass
@@ -518,8 +584,11 @@ class HelperRegistry:
             print(f"Warning: Failed to process helper {helper_id}: {e}")
     
     def _log_validation_failure(self, helper_entry: HelperRegistryEntry):
-        """Log helper validation failure to audit log."""
+        """Log helper validation failure to audit log with integrity chaining."""
         timestamp = datetime.utcnow().isoformat() + 'Z'
+        
+        # Sanitize environment variable names for logging
+        current_env = sanitize_env(dict(os.environ))
         
         audit_entry = {
             "ts": timestamp,
@@ -528,12 +597,18 @@ class HelperRegistry:
             "validation_errors": helper_entry.validation_errors,
             "missing_envs": helper_entry.missing_envs,
             "required_envs": helper_entry.required_envs,
-            "success": False
+            "success": False,
+            "sanitized_env": current_env  # Log sanitized environment for debugging
         }
         
         try:
-            with open(self.audit_log, 'a') as f:
-                f.write(json.dumps(audit_entry) + '\n')
+            if AUDIT_LOGGER_AVAILABLE and get_audit_logger:
+                # Use integrity audit logger if available
+                get_audit_logger().log_entry(audit_entry)
+            else:
+                # Fallback to direct file writing for standalone usage
+                with open(self.audit_log, 'a') as f:
+                    f.write(json.dumps(audit_entry) + '\n')
         except Exception as e:
             print(f"Warning: Failed to write validation audit log: {e}")
     
@@ -802,20 +877,116 @@ class HelperExecutor:
         """Generate approval token for two-step execution."""
         return str(uuid.uuid4()).replace("-", "")[:16]
     
+    def _sanitize_input_data(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sanitize input data by redacting sensitive fields.
+        
+        Args:
+            input_data: Helper input data
+            
+        Returns:
+            Sanitized input data with sensitive values redacted
+        """
+        if not isinstance(input_data, dict):
+            return input_data
+        
+        sanitized = {}
+        for key, value in input_data.items():
+            # Check if the key or value contains sensitive information
+            key_lower = key.lower()
+            
+            # Sensitive key patterns
+            sensitive_key_patterns = [
+                'key', 'secret', 'password', 'token', 'auth', 'credential', 
+                'passphrase', 'private', 'cert', 'api_key', 'access_key'
+            ]
+            
+            is_sensitive_key = any(pattern in key_lower for pattern in sensitive_key_patterns)
+            
+            # Also check if value looks like a sensitive string (long alphanumeric, starts with certain prefixes)
+            is_sensitive_value = False
+            if isinstance(value, str) and len(value) > 10:
+                # Check for common secret prefixes
+                sensitive_prefixes = ['sk_', 'pk_', 'Bearer ', 'Basic ']
+                is_sensitive_value = any(value.startswith(prefix) for prefix in sensitive_prefixes)
+                # Also check for long alphanumeric strings that might be secrets (more conservative)
+                if len(value) > 30 and value.replace('-', '').replace('_', '').isalnum():
+                    is_sensitive_value = True
+            
+            if is_sensitive_key or is_sensitive_value:
+                sanitized[key] = "****"
+            elif isinstance(value, dict):
+                # Recursively sanitize nested dictionaries
+                sanitized[key] = self._sanitize_input_data(value)
+            elif isinstance(value, list):
+                # Sanitize list items
+                sanitized[key] = [
+                    self._sanitize_input_data(item) if isinstance(item, dict) else item 
+                    for item in value
+                ]
+            else:
+                sanitized[key] = value
+        
+        return sanitized
+    
+    def _sanitize_error_message(self, error_msg: str) -> str:
+        """
+        Sanitize error messages by redacting sensitive information.
+        
+        Args:
+            error_msg: Error message
+            
+        Returns:
+            Sanitized error message
+        """
+        if not isinstance(error_msg, str):
+            return error_msg
+        
+        # Define patterns for sensitive information in error messages
+        sensitive_patterns = [
+            # Specific known secret prefixes
+            (r'sk_[A-Za-z0-9_]+', '****'),   # Secret keys starting with sk_
+            (r'pk_[A-Za-z0-9_]+', '****'),   # Public keys starting with pk_
+            (r'Bearer [A-Za-z0-9_.-]+', 'Bearer ****'),  # Bearer tokens
+            (r'Basic [A-Za-z0-9+/=]+', 'Basic ****'),    # Basic auth
+            (r'\bapi_[A-Za-z0-9_]{15,}\b', 'api_****'),          # API keys (long ones)
+            (r'\bsecret_[A-Za-z0-9_]{10,}\b', 'secret_****'),    # Secret keys (long ones)
+            # Environment variable patterns
+            (r'[A-Z_]+(?:KEY|SECRET|PASSWORD|TOKEN)=[A-Za-z0-9_.-]{15,}', 
+             'REDACTED_ENV=****'),
+            # JSON-like patterns and plaintext patterns
+            (r'token["\s:=]+[A-Za-z0-9_.-]{15,}', 'token": "****"'),  # JSON tokens
+            (r'key["\s:=]+[A-Za-z0-9_.-]{15,}', 'key": "****"'),      # JSON keys
+            (r'password["\s:=]+[A-Za-z0-9_.-]{10,}', 'password": "****"'),  # JSON passwords
+            (r'\bpassword:\s+[A-Za-z0-9_.-]{10,}', 'password: ****'),  # Plain text passwords
+            # Very long alphanumeric strings (40+ chars)
+            (r'\b[A-Za-z0-9_]{40,}\b', '****'),
+        ]
+        
+        sanitized_msg = error_msg
+        for pattern, replacement in sensitive_patterns:
+            sanitized_msg = re.sub(pattern, replacement, sanitized_msg, flags=re.IGNORECASE)
+        
+        return sanitized_msg
+    
     def _log_audit(self, action: str, helper_id: str, input_data: Dict[str, Any], 
                    session_id: str = None, error: str = None, token_id: str = None,
                    idempotency_key: str = None):
-        """Log audit entry for helper execution."""
+        """Log audit entry for helper execution with integrity chaining."""
         timestamp = datetime.utcnow().isoformat() + 'Z'
+        
+        # Sanitize input_data to remove potential sensitive information
+        sanitized_input = self._sanitize_input_data(input_data)
         
         audit_entry = {
             "ts": timestamp,
             "session_id": session_id or "unknown",
             "action": action,
             "helper_id": helper_id,
-            "input_hash": hash(json.dumps(input_data, sort_keys=True)),
+            "input_hash": hash(json.dumps(sanitized_input, sort_keys=True)),
+            "sanitized_input": sanitized_input,
             "success": error is None,
-            "error": error
+            "error": self._sanitize_error_message(error) if error else None
         }
         
         if token_id:
@@ -824,8 +995,13 @@ class HelperExecutor:
             audit_entry["idempotency_key"] = idempotency_key
         
         try:
-            with open(self.audit_log, 'a') as f:
-                f.write(json.dumps(audit_entry) + '\n')
+            if AUDIT_LOGGER_AVAILABLE and get_audit_logger:
+                # Use integrity audit logger if available
+                get_audit_logger().log_entry(audit_entry)
+            else:
+                # Fallback to direct file writing for standalone usage
+                with open(self.audit_log, 'a') as f:
+                    f.write(json.dumps(audit_entry) + '\n')
         except Exception as e:
             print(f"Warning: Failed to write audit log: {e}")
 

@@ -4,6 +4,7 @@ Implements M2: Experience Store with NDJSON and SQLite logging.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -31,6 +32,108 @@ def load_env_file():
 
 # Load .env file on module import
 load_env_file()
+
+
+def sanitize_sensitive_data(data: Any) -> Any:
+    """
+    Sanitize any data structure by redacting sensitive information.
+    
+    This prevents secrets from being exposed in error responses, logs, or API responses.
+    Works recursively on dictionaries, lists, and strings.
+    
+    Args:
+        data: Any data structure (dict, list, str, etc.)
+        
+    Returns:
+        Sanitized data with sensitive values redacted
+    """
+    if isinstance(data, dict):
+        sanitized = {}
+        for key, value in data.items():
+            # Check if key is sensitive
+            key_lower = key.lower()
+            sensitive_key_patterns = [
+                'key', 'secret', 'password', 'token', 'auth', 'credential', 
+                'passphrase', 'private', 'cert', 'api_key', 'access_key',
+                'authorization', 'bearer', 'basic'
+            ]
+            
+            is_sensitive_key = any(pattern in key_lower for pattern in sensitive_key_patterns)
+            
+            if is_sensitive_key:
+                sanitized[key] = "****"
+            else:
+                sanitized[key] = sanitize_sensitive_data(value)
+        
+        return sanitized
+    
+    elif isinstance(data, list):
+        return [sanitize_sensitive_data(item) for item in data]
+    
+    elif isinstance(data, str):
+        return sanitize_sensitive_string(data)
+    
+    else:
+        return data
+
+
+def sanitize_sensitive_string(text: str) -> str:
+    """
+    Sanitize strings by redacting sensitive patterns.
+    
+    Args:
+        text: String to sanitize
+        
+    Returns:
+        String with sensitive patterns redacted
+    """
+    if not isinstance(text, str):
+        return text
+    
+    # Define patterns for sensitive information (order matters - more specific first)
+    sensitive_patterns = [
+        # Specific known secret prefixes
+        (r'sk_[A-Za-z0-9_]+', '****'),   # Secret keys starting with sk_
+        (r'pk_[A-Za-z0-9_]+', '****'),   # Public keys starting with pk_
+        (r'Bearer [A-Za-z0-9_.-]+', 'Bearer ****'),  # Bearer tokens
+        (r'Basic [A-Za-z0-9+/=]+', 'Basic ****'),    # Basic auth
+        (r'\bapi_[A-Za-z0-9_]{15,}\b', 'api_****'),      # API keys (long ones) with word boundaries
+        (r'\bsecret_[A-Za-z0-9_]{10,}\b', 'secret_****'), # Secret keys (long ones) with word boundaries
+        # Environment variable patterns (specific)
+        (r'[A-Z_]+(?:KEY|SECRET|PASSWORD|TOKEN)=[A-Za-z0-9_.-]{15,}', 
+         'REDACTED_ENV=****'),
+        # JSON-like patterns
+        (r'"[^"]*(?:key|secret|password|token|auth|credential)[^"]*"\s*:\s*"[^"]{15,}"', 
+         '"****": "****"'),
+        # Plain text password patterns
+        (r'\bpassword:\s+[A-Za-z0-9_.-]{10,}', 'password: ****'),
+        # Very long alphanumeric strings that look like secrets (40+ chars to be more conservative)
+        (r'\b[A-Za-z0-9_]{40,}\b', '****'),
+    ]
+    
+    sanitized_text = text
+    for pattern, replacement in sensitive_patterns:
+        sanitized_text = re.sub(pattern, replacement, sanitized_text, flags=re.IGNORECASE)
+    
+    return sanitized_text
+
+
+def sanitize_traceback(traceback_str: str) -> str:
+    """
+    Sanitize tracebacks by removing sensitive information.
+    
+    Args:
+        traceback_str: Traceback string
+        
+    Returns:
+        Sanitized traceback string
+    """
+    if not isinstance(traceback_str, str):
+        return traceback_str
+    
+    # Apply string sanitization to the traceback
+    return sanitize_sensitive_string(traceback_str)
+
 
 from resolve import ModelResolver
 from store import experience_store
@@ -840,9 +943,10 @@ async def route_request(
                         )
                     else:
                         # Regular runtime error
+                        sanitized_error = sanitize_sensitive_string(str(e))
                         raise HTTPException(
                             status_code=500,
-                            detail=f"Helper preview failed: {str(e)}",
+                            detail=f"Helper preview failed: {sanitized_error}",
                             headers={"error_code": "PREVIEW_FAILED"}
                         )
             
@@ -1002,9 +1106,12 @@ async def route_request(
                 error_code="HELPER_ERROR"
             )
             
+            # Sanitize error message before returning to client
+            sanitized_error = sanitize_sensitive_string(str(e))
+            
             raise HTTPException(
                 status_code=500,
-                detail=f"Helper execution failed: {str(e)}"
+                detail=f"Helper execution failed: {sanitized_error}"
             )
     
     elif request.route == "auto":
