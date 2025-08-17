@@ -16,6 +16,23 @@ import yaml
 import jsonschema
 from datetime import datetime
 
+# Load environment variables from .env file if it exists
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_file = Path(__file__).parent.parent / ".env"
+    if env_file.exists():
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    # Only set if not already in environment
+                    if key not in os.environ:
+                        os.environ[key] = value.strip('"').strip("'")
+
+# Load .env file on module import
+load_env_file()
+
 
 class HelperManifest:
     """Represents a helper manifest with validation."""
@@ -266,6 +283,49 @@ class HelperExecutor:
             self._log_audit("preview_error", helper_id, input_data, session_id, error=str(e))
             raise
     
+    def execute(self, helper_id: str, input_data: Dict[str, Any], 
+                session_id: str = None, token_id: str = None, 
+                idempotency_key: str = None) -> Dict[str, Any]:
+        """Execute helper in execution mode."""
+        helper = self.registry.get_helper(helper_id)
+        if not helper:
+            raise ValueError(f"Helper not found: {helper_id}")
+        
+        if not helper.can_execute():
+            raise ValueError(f"Helper {helper_id} does not support execution mode")
+        
+        # Validate input
+        if not helper.validate_input(input_data):
+            raise ValueError(f"Input validation failed for helper {helper_id}")
+        
+        # Log audit entry
+        self._log_audit("execute", helper_id, input_data, session_id, 
+                       token_id=token_id, idempotency_key=idempotency_key)
+        
+        # Execute helper in execution mode
+        try:
+            result = self._execute_helper(helper, input_data, mode="execute")
+            
+            # Validate output against schema
+            if not helper.validate_output(result):
+                self._log_audit("execute_error", helper_id, input_data, session_id, 
+                               token_id=token_id, idempotency_key=idempotency_key,
+                               error="Output schema validation failed")
+                raise ValueError("Output schema validation failed")
+            
+            return {
+                "status": "success",
+                "action": "execute",
+                "helper_id": helper_id,
+                "result": result
+            }
+            
+        except Exception as e:
+            self._log_audit("execute_error", helper_id, input_data, session_id, 
+                           token_id=token_id, idempotency_key=idempotency_key,
+                           error=str(e))
+            raise
+    
     def _execute_helper(self, helper: HelperManifest, input_data: Dict[str, Any], 
                        mode: str = "preview") -> Dict[str, Any]:
         """Execute helper subprocess with sandbox constraints."""
@@ -273,11 +333,29 @@ class HelperExecutor:
         # Prepare environment
         env = os.environ.copy()
         
-        # Add required environment variables
+        # Ensure exchange credentials are loaded for helpers that need them
+        exchange_vars = ["EXCHANGE_API_KEY", "EXCHANGE_SECRET", "EXCHANGE_PASSPHRASE"]
         required_env = helper.environment.get("required", [])
+        
+        # Check if any exchange vars are required
+        needs_exchange = any(var in required_env for var in exchange_vars)
+        if needs_exchange:
+            # Reload .env file to get latest credentials
+            load_env_file()
+            # Update env dict with current environment
+            env = os.environ.copy()
+        
+        # Check for missing required environment variables
+        missing_vars = []
         for env_var in required_env:
             if env_var not in env:
-                raise ValueError(f"Required environment variable missing: {env_var}")
+                missing_vars.append(env_var)
+        
+        if missing_vars:
+            # For execute mode, raise with missing_vars info for 409 error
+            error = ValueError(f"Required environment variable(s) missing: {', '.join(missing_vars)}")
+            error.missing_vars = missing_vars
+            raise error
         
         # Prepare command
         commands = helper.sandbox.get("commands", [])
@@ -324,7 +402,8 @@ class HelperExecutor:
         return str(uuid.uuid4()).replace("-", "")[:16]
     
     def _log_audit(self, action: str, helper_id: str, input_data: Dict[str, Any], 
-                   session_id: str = None, error: str = None):
+                   session_id: str = None, error: str = None, token_id: str = None,
+                   idempotency_key: str = None):
         """Log audit entry for helper execution."""
         timestamp = datetime.utcnow().isoformat() + 'Z'
         
@@ -337,6 +416,11 @@ class HelperExecutor:
             "success": error is None,
             "error": error
         }
+        
+        if token_id:
+            audit_entry["token_id"] = token_id
+        if idempotency_key:
+            audit_entry["idempotency_key"] = idempotency_key
         
         try:
             with open(self.audit_log, 'a') as f:

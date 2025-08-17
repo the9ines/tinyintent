@@ -14,6 +14,23 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, validator
 import uvicorn
 
+# Load environment variables from .env file if it exists
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_file = Path(__file__).parent.parent / ".env"
+    if env_file.exists():
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    # Only set if not already in environment
+                    if key not in os.environ:
+                        os.environ[key] = value.strip('"').strip("'")
+
+# Load .env file on module import
+load_env_file()
+
 from resolve import ModelResolver
 from store import experience_store
 from approval import approval_manager
@@ -55,6 +72,8 @@ class RouteRequest(BaseModel):
     # Guarded execution fields
     execute: Optional[bool] = False  # True to execute, False for preview (default)
     approval_token: Optional[str] = None  # Required for execute=True
+    # Idempotency field
+    idempotency_key: Optional[str] = None  # Optional idempotency key
     
     @validator('text')
     def text_must_not_be_empty(cls, v):
@@ -81,6 +100,8 @@ class RouteResponse(BaseModel):
     reflection: Optional[Dict[str, Any]] = None
     veto_reason: Optional[str] = None
     reflection_error: Optional[str] = None
+    # Idempotency field
+    idempotent: Optional[bool] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -306,9 +327,13 @@ async def readiness_check() -> Dict[str, Any]:
 @app.post("/route")
 async def route_request(
     request: RouteRequest, 
-    auth: bool = Depends(verify_auth)
+    auth: bool = Depends(verify_auth),
+    idempotency_key_header: Optional[str] = None
 ) -> RouteResponse:
     """Route a request to generation or action with full event logging."""
+    
+    # Get idempotency key from request body or header
+    idempotency_key = request.idempotency_key or idempotency_key_header
     
     # Get or create session ID
     session_id = request.session_id
@@ -410,7 +435,7 @@ async def route_request(
             )
     
     elif request.route == "act":
-        # Action route - delegate to Helpers Orchestrator (M4: preview only)
+        # Action route - delegate to Helpers Orchestrator
         try:
             start_time = time.time()
             
@@ -428,6 +453,15 @@ async def route_request(
                     detail="Helpers framework is disabled"
                 )
             
+            # Check execution gate for execute mode
+            if request.execute:
+                execution_enabled = os.getenv("EXECUTION_ENABLED", "0") == "1"
+                if not execution_enabled:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Execution disabled"
+                    )
+            
             # Determine helper to use
             if request.helper_id:
                 helper_id = request.helper_id
@@ -442,14 +476,43 @@ async def route_request(
                 # Use LLM to extract structured input from natural language
                 helper_input = extract_helper_input(request.text, helper_id, model_to_use)
             
+            # Check for idempotency in execute mode
+            if request.execute and idempotency_key:
+                cached_result = approval_manager.get_idempotency_result(
+                    idempotency_key, helper_id, helper_input
+                )
+                if cached_result:
+                    # Return cached result with idempotent flag
+                    cached_result["idempotent"] = True
+                    return RouteResponse(**cached_result)
+            
             # Determine execution mode
             execution_mode = "execute" if request.execute else "preview"
             
             # Handle guarded execution flow
             if request.execute:
+                # Get helper manifest for risk level
+                helper_manifest = helper_registry.get_helper(helper_id)
+                if not helper_manifest:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Helper not found: {helper_id}"
+                    )
+                
+                # Check if helper can execute
+                if not helper_manifest.can_execute():
+                    raise HTTPException(
+                        status_code=501,
+                        detail=f"Helper {helper_id} does not support execution"
+                    )
+                
+                # Get risk level from registry or manifest
+                registry_entry = helper_registry.registry_data.get("helpers", {}).get(helper_id, {})
+                risk_level = registry_entry.get("risk_level", "medium")
+                
                 # Validate approval token for execution
-                is_valid, error_msg = approval_manager.validate_approval_token(
-                    request.approval_token, helper_id, helper_input, request.text
+                is_valid, error_msg, token_id = approval_manager.validate_approval_token(
+                    request.approval_token, helper_id, helper_input, request.text, risk_level
                 )
                 
                 if not is_valid:
@@ -467,12 +530,47 @@ async def route_request(
                         detail=error_msg
                     )
                 
-                # Execute helper (this would be implemented in M5+)
-                # For now, return error as execute mode is not yet implemented
-                raise HTTPException(
-                    status_code=501,
-                    detail="Helper execution mode not yet implemented - M5 feature"
-                )
+                # Execute helper
+                try:
+                    helper_result = helper_executor.execute(
+                        helper_id=helper_id,
+                        input_data=helper_input,
+                        session_id=session_id,
+                        token_id=token_id,
+                        idempotency_key=idempotency_key
+                    )
+                except ValueError as e:
+                    if hasattr(e, 'missing_vars'):
+                        # Missing environment variables - return 409
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Required environment variables missing for {helper_id}",
+                            headers={"missing_vars": json.dumps(e.missing_vars)}
+                        )
+                    elif "Output schema validation failed" in str(e):
+                        # Schema validation failed - return 500
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Helper output schema validation failed",
+                            headers={"error_code": "SCHEMA_VALIDATION_FAILED"}
+                        )
+                    else:
+                        raise
+                
+                # Cache result for idempotency if key provided
+                if idempotency_key:
+                    cache_result = {
+                        "status": helper_result.get("status", "success"),
+                        "route_used": "act",
+                        "session_id": session_id,
+                        "action": "execute",
+                        "helper_id": helper_id,
+                        "result": helper_result.get("result")
+                    }
+                    approval_manager.set_idempotency_result(
+                        idempotency_key, helper_id, helper_input, cache_result
+                    )
+                
             else:
                 # Execute helper in preview mode
                 helper_result = helper_executor.preview(
@@ -536,19 +634,34 @@ async def route_request(
                 success=True
             )
             
-            return RouteResponse(
-                status=helper_result.get("status", "success"),
-                route_used="act",
-                session_id=session_id,
-                latency_ms=latency_ms,
-                action=execution_mode,
-                helper_id=helper_result.get("helper_id", helper_id),
-                preview_json=helper_result.get("preview_json"),
-                approval_token=helper_result.get("approval_token"),
-                reflection=helper_result.get("reflection"),
-                veto_reason=helper_result.get("veto_reason"),
-                reflection_error=helper_result.get("reflection_error")
-            )
+            # Build response based on execution mode
+            if request.execute:
+                return RouteResponse(
+                    status=helper_result.get("status", "success"),
+                    route_used="act",
+                    session_id=session_id,
+                    latency_ms=latency_ms,
+                    action="execute",
+                    helper_id=helper_id,
+                    preview_json=helper_result.get("result"),
+                    reflection=helper_result.get("reflection"),
+                    veto_reason=helper_result.get("veto_reason"),
+                    reflection_error=helper_result.get("reflection_error")
+                )
+            else:
+                return RouteResponse(
+                    status=helper_result.get("status", "success"),
+                    route_used="act",
+                    session_id=session_id,
+                    latency_ms=latency_ms,
+                    action="preview",
+                    helper_id=helper_result.get("helper_id", helper_id),
+                    preview_json=helper_result.get("preview_json"),
+                    approval_token=helper_result.get("approval_token"),
+                    reflection=helper_result.get("reflection"),
+                    veto_reason=helper_result.get("veto_reason"),
+                    reflection_error=helper_result.get("reflection_error")
+                )
             
         except HTTPException:
             raise  # Re-raise HTTP exceptions

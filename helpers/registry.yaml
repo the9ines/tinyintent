@@ -11,6 +11,7 @@ helpers:
     enabled: true
     category: "trading"
     risk_level: "high"
+    can_execute: true
     manifest_path: "helpers/bot_guard/helper.yaml"
     requires_approval: true
     
@@ -20,6 +21,7 @@ helpers:
     enabled: true
     category: "monitoring"
     risk_level: "low"
+    can_execute: true
     manifest_path: "helpers/log_tailer/helper.yaml"
     requires_approval: false
     
@@ -29,6 +31,7 @@ helpers:
     enabled: true
     category: "infrastructure"
     risk_level: "medium"
+    can_execute: true
     manifest_path: "helpers/ssh_ops/helper.yaml"
     requires_approval: true
 

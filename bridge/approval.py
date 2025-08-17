@@ -19,6 +19,7 @@ class ApprovalTokenManager:
     def __init__(self, token_expiry_minutes: int = 2):
         self.token_expiry_minutes = token_expiry_minutes
         self.tokens: Dict[str, Dict[str, Any]] = {}
+        self.idempotency_cache: Dict[str, Dict[str, Any]] = {}
         self.audit_log = Path(__file__).parent / "logs" / "audit.log"
         self.audit_log.parent.mkdir(parents=True, exist_ok=True)
     
@@ -66,7 +67,8 @@ class ApprovalTokenManager:
         return token
     
     def validate_approval_token(self, token: str, helper_id: str, 
-                               helper_input: Dict[str, Any], user_text: str) -> Tuple[bool, str]:
+                               helper_input: Dict[str, Any], user_text: str, 
+                               risk_level: str = "medium") -> Tuple[bool, str, Optional[str]]:
         """
         Validate an approval token for execution.
         
@@ -75,41 +77,53 @@ class ApprovalTokenManager:
             helper_id: Helper ID being executed
             helper_input: Input data for the helper
             user_text: Original user request text
+            risk_level: Risk level of the helper (low/medium/high)
             
         Returns:
-            Tuple of (is_valid, error_message)
+            Tuple of (is_valid, error_message, token_id)
         """
         if not token:
-            return False, "Approval token is required for execution"
+            return False, "Approval token is required for execution", None
         
         token_data = self.tokens.get(token)
         if not token_data:
             self._log_approval_event("token_invalid", token, helper_id)
-            return False, "Invalid approval token"
+            return False, "Invalid approval token", None
         
         # Check if token is already used
         if token_data.get("used", False):
             self._log_approval_event("token_already_used", token, helper_id)
-            return False, "Approval token already used"
+            return False, "Approval token already used", None
         
         # Check if token is expired
         expiry_time = datetime.fromisoformat(token_data["expires_at"].replace('Z', '+00:00'))
         if datetime.utcnow().replace(tzinfo=expiry_time.tzinfo) > expiry_time:
             self._log_approval_event("token_expired", token, helper_id)
-            return False, "Approval token expired"
+            return False, "Approval token expired", None
+        
+        # Check high-risk token age requirement (≤60s)
+        if risk_level == "high":
+            created_time = datetime.fromisoformat(token_data["created_at"].replace('Z', '+00:00'))
+            token_age = datetime.utcnow().replace(tzinfo=created_time.tzinfo) - created_time
+            if token_age.total_seconds() > 60:
+                self._log_approval_event("token_too_old", token, helper_id)
+                return False, "Approval token too old for high-risk helper", None
         
         # Validate token matches current request
         expected_hash = self._hash_input(helper_id, helper_input, user_text)
         if token_data["input_hash"] != expected_hash:
             self._log_approval_event("token_mismatch", token, helper_id)
-            return False, "Approval token does not match current request"
+            return False, "Approval token does not match current request", None
         
         # Mark token as used
         token_data["used"] = True
         token_data["used_at"] = datetime.utcnow().isoformat() + 'Z'
         
+        # Generate stable token_id for logging
+        token_id = hashlib.sha256(token.encode()).hexdigest()[:16]
+        
         self._log_approval_event("token_validated", token, helper_id, token_data["session_id"])
-        return True, ""
+        return True, "", token_id
     
     def get_token_info(self, token: str) -> Optional[Dict[str, Any]]:
         """Get information about an approval token."""
@@ -130,6 +144,67 @@ class ApprovalTokenManager:
             self._log_approval_event("token_removed", token, "cleanup", session_id)
         
         return removed_count
+    
+    def get_idempotency_result(self, idempotency_key: str, helper_id: str, 
+                              helper_input: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Get cached result for idempotency key if within 10 minutes."""
+        if not idempotency_key:
+            return None
+        
+        cache_key = self._build_idempotency_key(idempotency_key, helper_id, helper_input)
+        cached_entry = self.idempotency_cache.get(cache_key)
+        
+        if not cached_entry:
+            return None
+        
+        # Check if entry is within 10 minutes
+        cached_time = datetime.fromisoformat(cached_entry["timestamp"].replace('Z', '+00:00'))
+        age = datetime.utcnow().replace(tzinfo=cached_time.tzinfo) - cached_time
+        
+        if age.total_seconds() > 600:  # 10 minutes
+            # Clean up expired entry
+            del self.idempotency_cache[cache_key]
+            return None
+        
+        return cached_entry["result"]
+    
+    def set_idempotency_result(self, idempotency_key: str, helper_id: str, 
+                              helper_input: Dict[str, Any], result: Dict[str, Any]):
+        """Cache result for idempotency key."""
+        if not idempotency_key:
+            return
+        
+        cache_key = self._build_idempotency_key(idempotency_key, helper_id, helper_input)
+        
+        self.idempotency_cache[cache_key] = {
+            "result": result,
+            "timestamp": datetime.utcnow().isoformat() + 'Z',
+            "helper_id": helper_id
+        }
+        
+        # Clean up expired entries
+        self._cleanup_expired_idempotency()
+    
+    def _build_idempotency_key(self, idempotency_key: str, helper_id: str, 
+                              helper_input: Dict[str, Any]) -> str:
+        """Build cache key for idempotency."""
+        input_hash = self._hash_input(helper_id, helper_input, "")
+        return f"{idempotency_key}:{helper_id}:{input_hash}"
+    
+    def _cleanup_expired_idempotency(self):
+        """Remove expired idempotency cache entries."""
+        current_time = datetime.utcnow()
+        keys_to_remove = []
+        
+        for cache_key, entry in self.idempotency_cache.items():
+            cached_time = datetime.fromisoformat(entry["timestamp"].replace('Z', '+00:00'))
+            age = current_time.replace(tzinfo=cached_time.tzinfo) - cached_time
+            
+            if age.total_seconds() > 600:  # 10 minutes
+                keys_to_remove.append(cache_key)
+        
+        for key in keys_to_remove:
+            del self.idempotency_cache[key]
     
     def _hash_input(self, helper_id: str, helper_input: Dict[str, Any], user_text: str) -> str:
         """Create a hash of the input parameters for validation."""
