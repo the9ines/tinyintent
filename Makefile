@@ -79,6 +79,31 @@ router-clean: ## Clean router build artifacts
 	@rm -f $(ROUTER_DIR)/*.mlmodel
 	@echo "$(GREEN)✅ Router artifacts cleaned$(NC)"
 
+##@ Learning Loop (M5.3)
+learn: ## Automated learning loop: export episodes → train → evaluate
+	@echo "$(GREEN)Starting TinyIntent Learning Loop...$(NC)"
+	@echo "=================================="
+	@echo "$(YELLOW)Step 1: Exporting episodes to training data...$(NC)"
+	@$(PYTHON) scripts/export_episodes.py
+	@echo ""
+	@echo "$(YELLOW)Step 2: Training router model...$(NC)"
+	@$(MAKE) router-train
+	@echo ""
+	@echo "$(YELLOW)Step 3: Evaluating trained model...$(NC)"
+	@$(MAKE) router-eval
+	@echo ""
+	@echo "$(GREEN)✅ Learning loop completed!$(NC)"
+
+export-episodes: ## Export episodes to training data
+	@echo "$(GREEN)Exporting episodes to training data...$(NC)"
+	@$(PYTHON) scripts/export_episodes.py
+	@echo "$(GREEN)✅ Episodes exported$(NC)"
+
+export-summary: ## Show episode export summary
+	@echo "$(GREEN)Episode Export Summary$(NC)"
+	@echo "====================="
+	@$(PYTHON) scripts/export_episodes.py --summary
+
 ##@ Data Management
 clean-data: ## Clean episode data (DANGEROUS)
 	@echo "$(RED)⚠️  This will delete all episode data!$(NC)"
@@ -119,4 +144,4 @@ status: ## Show project status
 	@echo "Recent activity:"
 	@ls -la $(DATA_DIR)/episodes/ 2>/dev/null || echo "No episode data"
 
-.PHONY: help bridgesrv doctor router-train router-eval router-clean clean-data backup-data lint format test clean status
+.PHONY: help bridgesrv doctor router-train router-eval router-clean learn export-episodes export-summary clean-data backup-data lint format test clean status
