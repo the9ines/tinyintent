@@ -101,6 +101,18 @@ promote: ## Promote evaluated model to active use if it meets criteria
 	@$(PYTHON) scripts/promote_model.py
 	@echo "$(GREEN)✅ Model promotion completed!$(NC)"
 
+autopilot: ## Run full continuous learning cycle: learn → promote
+	@echo "$(GREEN)Starting TinyIntent Autopilot...$(NC)"
+	@echo "==============================="
+	@$(PYTHON) scripts/autopilot.py
+	@echo "$(GREEN)✅ Autopilot cycle completed!$(NC)"
+
+autopilot-dry: ## Run autopilot in dry-run mode (no promotion)
+	@echo "$(GREEN)Starting TinyIntent Autopilot (DRY RUN)...$(NC)"
+	@echo "=========================================="
+	@$(PYTHON) scripts/autopilot.py --dry-run
+	@echo "$(GREEN)✅ Autopilot dry run completed!$(NC)"
+
 export-episodes: ## Export episodes to training data
 	@echo "$(GREEN)Exporting episodes to training data...$(NC)"
 	@$(PYTHON) scripts/export_episodes.py
@@ -151,4 +163,4 @@ status: ## Show project status
 	@echo "Recent activity:"
 	@ls -la $(DATA_DIR)/episodes/ 2>/dev/null || echo "No episode data"
 
-.PHONY: help bridgesrv doctor router-train router-eval router-clean learn promote export-episodes export-summary clean-data backup-data lint format test clean status
+.PHONY: help bridgesrv doctor router-train router-eval router-clean learn promote autopilot autopilot-dry export-episodes export-summary clean-data backup-data lint format test clean status
