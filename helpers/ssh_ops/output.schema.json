@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SSH Operations Output Schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "warning"],
+      "description": "Operation status"
+    },
+    "operation": {
+      "type": "string",
+      "description": "Operation that was performed"
+    },
+    "target": {
+      "type": "string",
+      "description": "Target that was operated on"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable status message"
+    },
+    "output": {
+      "type": "string",
+      "description": "Command output or log content"
+    },
+    "error": {
+      "type": "string",
+      "description": "Error message if operation failed"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Operation timestamp"
+    },
+    "execution_time": {
+      "type": "number",
+      "description": "Operation execution time in seconds"
+    },
+    "processes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "cpu": {
+            "type": "string"
+          },
+          "memory": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Process list for list_processes operation"
+    }
+  },
+  "required": ["status", "operation", "message", "timestamp"],
+  "additionalProperties": false
+}

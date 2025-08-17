@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bot Guard Output Schema", 
+  "description": "Output schema for crypto bot risk management operations",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "warning"],
+      "description": "Operation status"
+    },
+    "operation": {
+      "type": "string",
+      "description": "The operation that was performed or previewed"
+    },
+    "symbol": {
+      "type": "string",
+      "description": "Trading pair symbol"
+    },
+    "action_type": {
+      "type": "string",
+      "enum": ["preview", "execute"],
+      "description": "Whether this was a preview or actual execution"
+    },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Position ID"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Trading pair"
+          },
+          "side": {
+            "type": "string",
+            "enum": ["long", "short"]
+          },
+          "size": {
+            "type": "number",
+            "description": "Position size"
+          },
+          "entry_price": {
+            "type": "number",
+            "description": "Entry price"
+          },
+          "current_price": {
+            "type": "number",
+            "description": "Current market price"
+          },
+          "pnl": {
+            "type": "number",
+            "description": "Unrealized PnL"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["close", "modify", "none"],
+            "description": "Intended action for this position"
+          }
+        },
+        "required": ["id", "symbol", "side", "size"]
+      },
+      "description": "List of positions affected by the operation"
+    },
+    "orders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Order ID"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Trading pair"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["market", "limit", "stop", "stop_limit"]
+          },
+          "side": {
+            "type": "string",
+            "enum": ["buy", "sell"]
+          },
+          "amount": {
+            "type": "number",
+            "description": "Order amount"
+          },
+          "price": {
+            "type": "number",
+            "description": "Order price"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "filled", "cancelled", "rejected"]
+          }
+        },
+        "required": ["id", "symbol", "type", "side", "amount"]
+      },
+      "description": "Orders created or affected by the operation"
+    },
+    "balances": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Z]{2,10}$": {
+          "type": "object",
+          "properties": {
+            "free": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Available balance"
+            },
+            "used": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Balance in use"
+            },
+            "total": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Total balance"
+            }
+          },
+          "required": ["free", "used", "total"]
+        }
+      },
+      "description": "Account balances after operation"
+    },
+    "risk_metrics": {
+      "type": "object",
+      "properties": {
+        "total_exposure": {
+          "type": "number",
+          "description": "Total position exposure in base currency"
+        },
+        "leverage": {
+          "type": "number",
+          "description": "Current account leverage"
+        },
+        "margin_ratio": {
+          "type": "number",
+          "description": "Margin ratio percentage"
+        },
+        "daily_pnl": {
+          "type": "number",
+          "description": "Daily profit/loss"
+        }
+      },
+      "description": "Risk assessment metrics"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable status message"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the operation"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Any warnings or alerts"
+    },
+    "execution_id": {
+      "type": "string",
+      "description": "Unique execution identifier for tracking"
+    }
+  },
+  "required": ["status", "operation", "action_type", "message", "timestamp"],
+  "additionalProperties": false
+}

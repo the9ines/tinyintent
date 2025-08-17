@@ -1,0 +1,37 @@
+purpose: "Retrieve last N error lines from local log files."
+
+schema:
+  input: "./input.schema.json"
+  output: "./output.schema.json"
+
+capabilities:
+  preview: true
+  execute: true
+  emergency_close: false
+
+sandbox:
+  commands:
+    - "/usr/bin/python3"
+    - "./main.py"
+  network: "none"
+  timeouts:
+    - name: "default"
+      seconds: 5
+    - name: "execute"
+      seconds: 10
+  cpu:
+    max_ms: 500
+  mem:
+    max_mb: 50
+
+environment:
+  required: []
+  optional:
+    - "DEFAULT_LOG_DIR"
+    - "MAX_LINES_LIMIT"
+
+metadata:
+  version: "1.0.0"
+  author: "TinyIntent"
+  risk_level: "low"
+  audit_required: true

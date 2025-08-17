@@ -1,19 +1,35 @@
 """
 TinyIntent Bridge MVP - FastAPI service for routing and orchestrating AI tasks.
+Implements M2: Experience Store with NDJSON and SQLite logging.
 """
 
 import os
 import shutil
 import subprocess
 import time
-from typing import Dict, Any, Optional
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, validator
 import uvicorn
 
 from resolve import ModelResolver
-from events import event_logger, session_manager
+from store import experience_store
+
+# Import helpers framework (with fallback for missing dependencies)
+import sys
+sys.path.append(str(Path(__file__).parent.parent / "helpers"))
+try:
+    from sdk import helper_registry, helper_executor
+    from reflector import reflector
+    HELPERS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Helpers framework not available: {e}")
+    HELPERS_AVAILABLE = False
+    helper_registry = None
+    helper_executor = None
+    reflector = None
 
 
 # Initialize FastAPI app
@@ -33,6 +49,8 @@ class RouteRequest(BaseModel):
     llm_pref: Optional[str] = None  # small|medium|large
     llm_model: Optional[str] = None  # specific ollama tag
     session_id: Optional[str] = None  # Session ID for episode tracking
+    helper_id: Optional[str] = None  # Specific helper for act route
+    helper_input: Optional[Dict[str, Any]] = None  # Direct helper input
     
     @validator('text')
     def text_must_not_be_empty(cls, v):
@@ -50,6 +68,15 @@ class RouteResponse(BaseModel):
     latency_ms: Optional[int] = None
     session_id: str
     _router_fallback: Optional[bool] = None
+    # Helper-specific fields for act route
+    action: Optional[str] = None  # preview|execute
+    helper_id: Optional[str] = None
+    preview_json: Optional[Dict[str, Any]] = None
+    approval_token: Optional[str] = None
+    # Reflection layer fields
+    reflection: Optional[Dict[str, Any]] = None
+    veto_reason: Optional[str] = None
+    reflection_error: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -168,6 +195,77 @@ def check_router_binary() -> bool:
     return False
 
 
+def check_helpers_present() -> bool:
+    """Check if helpers are available and loaded."""
+    if not HELPERS_AVAILABLE or not helper_registry:
+        return False
+    return len(helper_registry.list_helpers()) > 0
+
+
+def get_missing_helpers() -> List[str]:
+    """Get list of helpers that failed to load."""
+    if not HELPERS_AVAILABLE:
+        return ["helpers framework not available"]
+    # TODO: Implement missing helpers detection
+    return []
+
+
+def route_to_helper(text: str, model_tag: str) -> str:
+    """Use LLM to determine which helper to use for action routing."""
+    # Simple heuristic for M4 - in M5 this would use the trained router
+    text_lower = text.lower()
+    
+    if any(term in text_lower for term in ['bot', 'position', 'trade', 'close', 'stop', 'emergency']):
+        return 'bot_guard'
+    
+    # Default fallback
+    return 'bot_guard'
+
+
+def extract_helper_input(text: str, helper_id: str, model_tag: str) -> Dict[str, Any]:
+    """Use LLM to extract structured input for helper from natural language."""
+    # Simple extraction logic for M4 - in M5 this would use LLM
+    text_lower = text.lower()
+    
+    if helper_id == 'bot_guard':
+        # Extract trading operations from text
+        if 'close all' in text_lower or 'emergency' in text_lower:
+            return {
+                "operation": "close_all_positions",
+                "dry_run": True
+            }
+        elif 'close' in text_lower:
+            # Try to extract symbol
+            symbols = ['btc', 'eth', 'sol', 'ada', 'dot']
+            symbol = None
+            for s in symbols:
+                if s in text_lower:
+                    symbol = f"{s.upper()}/USDT"
+                    break
+            
+            return {
+                "operation": "close_position",
+                "symbol": symbol or "BTC/USDT",
+                "dry_run": True
+            }
+        elif 'position' in text_lower:
+            return {
+                "operation": "get_positions",
+                "dry_run": True
+            }
+        elif 'balance' in text_lower:
+            return {
+                "operation": "get_balance",
+                "dry_run": True
+            }
+    
+    # Default fallback
+    return {
+        "operation": "get_positions",
+        "dry_run": True
+    }
+
+
 @app.get("/healthz")
 async def health_check() -> Dict[str, str]:
     """Health check endpoint - no authentication required."""
@@ -185,7 +283,9 @@ async def readiness_check() -> Dict[str, Any]:
         "ollama_present": check_ollama_present(),
         "router_binary": check_router_binary(),
         "models_present": len(missing_models) == 0,
-        "missing_models": missing_models
+        "missing_models": missing_models,
+        "helpers_present": check_helpers_present(),
+        "missing_helpers": get_missing_helpers()
     }
     
     # Return 503 if any critical checks fail
@@ -204,17 +304,17 @@ async def route_request(
     request: RouteRequest, 
     auth: bool = Depends(verify_auth)
 ) -> RouteResponse:
-    """Route a request to generation or action."""
+    """Route a request to generation or action with full event logging."""
     
     # Get or create session ID
     session_id = request.session_id
     if not session_id:
-        session_id = session_manager.create_session()
-    elif not session_manager.session_exists(session_id):
-        session_manager.create_session(session_id)
+        session_id = experience_store.create_session()
+    elif not experience_store.session_exists(session_id):
+        experience_store.create_session(session_id)
     
     # Update session activity
-    session_manager.update_session_activity(session_id)
+    experience_store.update_session_activity(session_id)
     
     # Determine which model to use
     model_to_use = None
@@ -224,7 +324,7 @@ async def route_request(
         model_to_use = model_resolver.get_model(request.llm_pref)
         if not model_to_use:
             # Log error event
-            event_logger.log_request(
+            experience_store.log_request(
                 session_id=session_id,
                 text=request.text,
                 route_final=request.route,
@@ -241,7 +341,7 @@ async def route_request(
     
     if not model_to_use:
         # Log error event
-        event_logger.log_request(
+        experience_store.log_request(
             session_id=session_id,
             text=request.text,
             route_final=request.route,
@@ -260,7 +360,7 @@ async def route_request(
             response_text, latency_ms = call_ollama_generate(model_to_use, request.text)
             
             # Log successful event
-            event_logger.log_request(
+            experience_store.log_request(
                 session_id=session_id,
                 text=request.text,
                 route_final="gen",
@@ -280,7 +380,7 @@ async def route_request(
             
         except HTTPException as e:
             # Log error event
-            event_logger.log_request(
+            experience_store.log_request(
                 session_id=session_id,
                 text=request.text,
                 route_final="gen",
@@ -292,7 +392,7 @@ async def route_request(
             
         except Exception as e:
             # Log error event
-            event_logger.log_request(
+            experience_store.log_request(
                 session_id=session_id,
                 text=request.text,
                 route_final="gen",
@@ -306,23 +406,120 @@ async def route_request(
             )
     
     elif request.route == "act":
-        # Log not implemented event
-        event_logger.log_request(
-            session_id=session_id,
-            text=request.text,
-            route_final="act",
-            success=False,
-            error_code="NOT_IMPLEMENTED"
-        )
-        # Action route - return 501 Not Implemented
-        raise HTTPException(
-            status_code=501,
-            detail="Action routing not yet implemented (coming in M4)"
-        )
+        # Action route - delegate to Helpers Orchestrator (M4: preview only)
+        try:
+            start_time = time.time()
+            
+            # Check if helpers are available and enabled
+            if not HELPERS_AVAILABLE:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Helpers framework not available (missing dependencies)"
+                )
+                
+            helpers_enabled = os.getenv("HELPERS_ENABLED", "1") == "1"
+            if not helpers_enabled:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Helpers framework is disabled"
+                )
+            
+            # Determine helper to use
+            if request.helper_id:
+                helper_id = request.helper_id
+            else:
+                # Use LLM to route to appropriate helper
+                helper_id = route_to_helper(request.text, model_to_use)
+            
+            # Prepare helper input
+            if request.helper_input:
+                helper_input = request.helper_input
+            else:
+                # Use LLM to extract structured input from natural language
+                helper_input = extract_helper_input(request.text, helper_id, model_to_use)
+            
+            # Execute helper in preview mode
+            helper_result = helper_executor.preview(
+                helper_id=helper_id,
+                input_data=helper_input,
+                session_id=session_id
+            )
+            
+            # Apply reflection layer validation
+            reflection_enabled = os.getenv("REFLECTION_ENABLED", "1") == "1"
+            reflection_result = None
+            
+            if reflection_enabled and reflector and helper_result.get("status") == "success":
+                try:
+                    reflection_result = reflector.reflect(
+                        helper_id=helper_id,
+                        user_text=request.text,
+                        helper_input=helper_input,
+                        helper_output=helper_result.get("preview_json", {}),
+                        session_id=session_id
+                    )
+                    
+                    # Add reflection data to helper result
+                    helper_result["reflection"] = reflection_result
+                    
+                    # Override approval if reflection vetoes
+                    if not reflection_result.get("approved", False):
+                        helper_result["status"] = "vetoed"
+                        helper_result["veto_reason"] = reflection_result.get("veto_reason")
+                        
+                except Exception as e:
+                    # Don't fail the request if reflection fails, but log it
+                    helper_result["reflection_error"] = str(e)
+            
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+            
+            # Log successful event
+            experience_store.log_request(
+                session_id=session_id,
+                text=request.text,
+                route_final="act",
+                helper_id=helper_id,
+                helper_input=helper_input,
+                preview_json=helper_result.get("preview_json"),
+                latency_ms=latency_ms,
+                success=True
+            )
+            
+            return RouteResponse(
+                status=helper_result.get("status", "success"),
+                route_used="act",
+                session_id=session_id,
+                latency_ms=latency_ms,
+                action=helper_result.get("action"),
+                helper_id=helper_result.get("helper_id"),
+                preview_json=helper_result.get("preview_json"),
+                approval_token=helper_result.get("approval_token"),
+                reflection=helper_result.get("reflection"),
+                veto_reason=helper_result.get("veto_reason"),
+                reflection_error=helper_result.get("reflection_error")
+            )
+            
+        except HTTPException:
+            raise  # Re-raise HTTP exceptions
+            
+        except Exception as e:
+            # Log error event
+            experience_store.log_request(
+                session_id=session_id,
+                text=request.text,
+                route_final="act",
+                success=False,
+                error_code="HELPER_ERROR"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Helper execution failed: {str(e)}"
+            )
     
     elif request.route == "auto":
         # Log not implemented event
-        event_logger.log_request(
+        experience_store.log_request(
             session_id=session_id,
             text=request.text,
             route_final="auto",
@@ -337,7 +534,7 @@ async def route_request(
     
     else:
         # Log error event
-        event_logger.log_request(
+        experience_store.log_request(
             session_id=session_id,
             text=request.text,
             route_final=request.route,
@@ -355,10 +552,10 @@ async def submit_feedback(
     request: FeedbackRequest,
     auth: bool = Depends(verify_auth)
 ) -> FeedbackResponse:
-    """Submit feedback for a session/episode."""
+    """Submit feedback for a session/episode. Implements M2 requirement."""
     
     # Validate session exists
-    if not session_manager.session_exists(request.session_id):
+    if not experience_store.session_exists(request.session_id):
         raise HTTPException(
             status_code=404,
             detail=f"Session {request.session_id} not found"
@@ -366,10 +563,10 @@ async def submit_feedback(
     
     # Log feedback event
     try:
-        event_logger.log_feedback(request.session_id, request.feedback)
+        experience_store.log_feedback(request.session_id, request.feedback)
         
         # Update session activity
-        session_manager.update_session_activity(request.session_id)
+        experience_store.update_session_activity(request.session_id)
         
         return FeedbackResponse(
             status="success",
@@ -393,6 +590,30 @@ async def reload_models(auth: bool = Depends(verify_auth)) -> Dict[str, str]:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to reload models: {str(e)}"
+        )
+
+
+@app.post("/admin/reload-helpers")
+async def reload_helpers(auth: bool = Depends(verify_auth)) -> Dict[str, str]:
+    """Reload helper manifests. M4: Helpers Framework v1"""
+    if not HELPERS_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Helpers framework not available (missing dependencies)"
+        )
+        
+    try:
+        helper_registry.reload()
+        helpers_count = len(helper_registry.list_helpers())
+        return {
+            "status": "success", 
+            "message": f"Helpers reloaded - {helpers_count} helpers available",
+            "helpers": helper_registry.list_helpers()
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reload helpers: {str(e)}"
         )
 
 

@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Log Tailer Input Schema",
+  "type": "object",
+  "properties": {
+    "log_path": {
+      "type": "string",
+      "description": "Path to the log file to tail"
+    },
+    "lines": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 50,
+      "description": "Number of lines to retrieve from end of file"
+    },
+    "filter": {
+      "type": "string",
+      "description": "Filter pattern to search for (optional)"
+    },
+    "level": {
+      "type": "string",
+      "enum": ["ERROR", "WARN", "INFO", "DEBUG", "ALL"],
+      "default": "ERROR",
+      "description": "Log level filter"
+    },
+    "since": {
+      "type": "string",
+      "description": "Retrieve logs since this timestamp (ISO format)"
+    }
+  },
+  "required": ["log_path"],
+  "additionalProperties": false
+}

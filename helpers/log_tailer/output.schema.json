@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Log Tailer Output Schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "warning"],
+      "description": "Operation status"
+    },
+    "log_path": {
+      "type": "string",
+      "description": "Path of the log file that was tailed"
+    },
+    "lines_requested": {
+      "type": "integer",
+      "description": "Number of lines requested"
+    },
+    "lines_returned": {
+      "type": "integer",
+      "description": "Actual number of lines returned"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable status message"
+    },
+    "log_content": {
+      "type": "string",
+      "description": "Retrieved log content"
+    },
+    "log_entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "timestamp": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "raw_line": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Parsed log entries (if parseable)"
+    },
+    "file_size": {
+      "type": "integer",
+      "description": "Size of the log file in bytes"
+    },
+    "last_modified": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last modification time of the log file"
+    },
+    "error": {
+      "type": "string",
+      "description": "Error message if operation failed"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Operation timestamp"
+    }
+  },
+  "required": ["status", "log_path", "message", "timestamp"],
+  "additionalProperties": false
+}

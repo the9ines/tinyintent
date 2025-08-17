@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bot Guard Input Schema",
+  "description": "Input schema for crypto bot risk management operations",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": [
+        "close_position",
+        "close_all_positions", 
+        "emergency_stop",
+        "get_positions",
+        "get_balance",
+        "set_stop_loss",
+        "cancel_orders"
+      ],
+      "description": "The operation to perform"
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z]{2,10}[/\\-][A-Z]{2,10}$",
+      "description": "Trading pair symbol (e.g., BTC/USDT, ETH-USD)",
+      "examples": ["BTC/USDT", "ETH/USD", "SOL/USDC"]
+    },
+    "position_id": {
+      "type": "string",
+      "description": "Specific position ID to target"
+    },
+    "amount": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Amount to close (optional, defaults to full position)"
+    },
+    "side": {
+      "type": "string",
+      "enum": ["long", "short", "both"],
+      "description": "Position side to close"
+    },
+    "price": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Limit price for orders (optional)"
+    },
+    "stop_loss_price": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Stop loss price level"
+    },
+    "emergency_code": {
+      "type": "string",
+      "pattern": "^[0-9]{3}-[A-Z]{3}-[0-9]{2}$",
+      "description": "Emergency authorization code (format: 123-ABC-45)"
+    },
+    "confirmation_phrase": {
+      "type": "string",
+      "enum": ["confirm emergency close"],
+      "description": "Required confirmation phrase for emergency operations"
+    },
+    "dry_run": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether to perform a dry run (preview only)"
+    }
+  },
+  "required": ["operation"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": ["close_position", "set_stop_loss"]
+          }
+        }
+      },
+      "then": {
+        "required": ["symbol"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "emergency_stop"
+          }
+        }
+      },
+      "then": {
+        "required": ["emergency_code", "confirmation_phrase"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+# TinyIntent Helpers Registry
+# Defines all registered helpers for the Helpers Framework v1
+
+version: "1.0"
+description: "TinyIntent Helpers Registry - M4 Framework"
+
+helpers:
+  bot_guard:
+    name: "Bot Guard"
+    description: "Crypto bot risk management and emergency controls"
+    enabled: true
+    category: "trading"
+    risk_level: "high"
+    manifest_path: "helpers/bot_guard/helper.yaml"
+    requires_approval: true
+    
+  log_tailer:
+    name: "Log Tailer"
+    description: "Retrieve last N error lines from logs"
+    enabled: true
+    category: "monitoring"
+    risk_level: "low"
+    manifest_path: "helpers/log_tailer/helper.yaml"
+    requires_approval: false
+    
+  ssh_ops:
+    name: "SSH Operations"
+    description: "Remote bot management via SSH: restart, status, logs"
+    enabled: true
+    category: "infrastructure"
+    risk_level: "medium"
+    manifest_path: "helpers/ssh_ops/helper.yaml"
+    requires_approval: true
+
+# Global settings
+settings:
+  default_timeout: 5
+  max_helpers: 10
+  audit_required: true
+  preview_only: true  # M4: Only preview mode enabled

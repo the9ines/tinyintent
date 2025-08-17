@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SSH Operations Input Schema",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": ["restart_bot", "tail_logs", "check_status", "list_processes"],
+      "description": "SSH operation to perform"
+    },
+    "target": {
+      "type": "string",
+      "description": "Target bot or service name"
+    },
+    "lines": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 50,
+      "description": "Number of log lines to tail (for tail_logs operation)"
+    },
+    "log_path": {
+      "type": "string",
+      "description": "Path to log file for tailing"
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 300,
+      "default": 30,
+      "description": "Command timeout in seconds"
+    }
+  },
+  "required": ["operation"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "restart_bot"
+          }
+        }
+      },
+      "then": {
+        "required": ["target"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "tail_logs"
+          }
+        }
+      },
+      "then": {
+        "required": ["log_path"]
+      }
+    }
+  ]
+}

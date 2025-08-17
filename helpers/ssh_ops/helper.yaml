@@ -1,0 +1,39 @@
+purpose: "SSH operations for bot management - restart bots, tail logs, check status."
+
+schema:
+  input: "./input.schema.json"
+  output: "./output.schema.json"
+
+capabilities:
+  preview: true
+  execute: true
+  emergency_close: false
+
+sandbox:
+  commands:
+    - "/usr/bin/python3"
+    - "./main.py"
+  network: "limited"  # Needs SSH access
+  timeouts:
+    - name: "default"
+      seconds: 10
+    - name: "execute"
+      seconds: 30
+  cpu:
+    max_ms: 2000
+  mem:
+    max_mb: 100
+
+environment:
+  required:
+    - "SSH_HOST"
+  optional:
+    - "SSH_USER"
+    - "SSH_KEY_PATH"
+    - "SSH_PORT"
+
+metadata:
+  version: "1.0.0"
+  author: "TinyIntent"
+  risk_level: "medium"
+  audit_required: true

@@ -1,0 +1,40 @@
+purpose: "Crypto bot risk management and emergency controls."
+
+schema:
+  input: "./input.schema.json"
+  output: "./output.schema.json"
+
+capabilities:
+  preview: true
+  execute: true
+  emergency_close: true
+
+sandbox:
+  commands:
+    - "/opt/homebrew/bin/node"
+    - "./main.js"
+  network: "isolated"
+  timeouts:
+    - name: "default"
+      seconds: 5
+    - name: "execute"
+      seconds: 15
+  cpu:
+    max_ms: 1000
+  mem:
+    max_mb: 50
+
+environment:
+  required:
+    - "EXCHANGE_API_KEY"
+    - "EXCHANGE_SECRET"
+    - "EXCHANGE_PASSPHRASE"
+  optional:
+    - "EXCHANGE_SANDBOX"
+    - "DRY_RUN_MODE"
+
+metadata:
+  version: "1.0.0"
+  author: "TinyIntent"
+  risk_level: "high"
+  audit_required: true
