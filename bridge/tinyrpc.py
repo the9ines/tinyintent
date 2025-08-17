@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import time
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, Request, Depends, status
@@ -63,6 +64,134 @@ model_resolver = ModelResolver()
 # Initialize audit log integrity system (M6.2)
 audit_log_path = Path(__file__).parent / "logs" / "audit.log"
 audit_logger = initialize_audit_logger(audit_log_path, max_size_mb=50)
+
+# Emergency Kill Switch System (M6.3)
+EMERGENCY_FLAG_PATH = os.environ.get("EMERGENCY_FLAG_PATH", str(Path(__file__).parent / "logs" / "emergency.flag"))
+emergency_flag_path = Path(EMERGENCY_FLAG_PATH)
+execution_lock = threading.Lock()  # Thread-safe access to execution state
+
+class EmergencyKillSwitch:
+    """Manages emergency kill switch state for execution control."""
+    
+    def __init__(self, flag_file_path: Path):
+        self.flag_file_path = flag_file_path
+        self.flag_file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._execution_enabled = True
+        self._load_state_from_file()
+    
+    def _load_state_from_file(self):
+        """Load emergency state from flag file on startup."""
+        if self.flag_file_path.exists():
+            self._execution_enabled = False
+            print("⚠️  EXECUTION DISABLED: Emergency flag file detected")
+            # Log startup warning
+            audit_logger.log_entry({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                "action": "emergency_startup_disabled",
+                "success": True,
+                "message": "Execution disabled on startup due to emergency flag",
+                "flag_file": str(self.flag_file_path)
+            })
+        else:
+            self._execution_enabled = os.getenv("EXECUTION_ENABLED", "0") == "1"
+            if self._execution_enabled:
+                print("✓ Execution enabled (EXECUTION_ENABLED=1)")
+            else:
+                print("ℹ️  Execution disabled (EXECUTION_ENABLED=0)")
+    
+    def is_execution_enabled(self) -> bool:
+        """Check if execution is currently enabled."""
+        with execution_lock:
+            return self._execution_enabled
+    
+    def trigger_emergency_kill(self, reason: str = "Manual trigger", triggered_by: str = "unknown") -> bool:
+        """
+        Trigger emergency kill switch - disables all execution immediately.
+        
+        Returns:
+            bool: True if kill was triggered successfully
+        """
+        with execution_lock:
+            if not self._execution_enabled:
+                return False  # Already disabled
+            
+            try:
+                # Create emergency flag file using atomic write
+                emergency_data = {
+                    "triggered_at": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                    "reason": reason,
+                    "triggered_by": triggered_by
+                }
+                
+                # Atomic write: write to temp file then replace
+                temp_file = self.flag_file_path.with_suffix('.tmp')
+                with open(temp_file, 'w') as f:
+                    import json
+                    json.dump(emergency_data, f, indent=2)
+                
+                # Atomic replace
+                import os
+                os.replace(str(temp_file), str(self.flag_file_path))
+                
+                # Disable execution in memory
+                self._execution_enabled = False
+                
+                # Log emergency kill event
+                audit_logger.log_entry({
+                    "ts": emergency_data["triggered_at"],
+                    "action": "emergency_kill",
+                    "success": True,
+                    "reason": reason,
+                    "triggered_by": triggered_by,
+                    "flag_file": str(self.flag_file_path),
+                    "severity": "CRITICAL"
+                })
+                
+                print(f"🚨 EMERGENCY KILL TRIGGERED: {reason}")
+                return True
+                
+            except Exception as e:
+                # Clean up temp file if it exists
+                temp_file = self.flag_file_path.with_suffix('.tmp')
+                try:
+                    temp_file.unlink()
+                except FileNotFoundError:
+                    pass
+                
+                # Log error but don't fail
+                audit_logger.log_entry({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                    "action": "emergency_kill_error",
+                    "success": False,
+                    "error": str(e),
+                    "reason": reason,
+                    "triggered_by": triggered_by
+                })
+                print(f"❌ Emergency kill failed: {e}")
+                return False
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current emergency status."""
+        with execution_lock:
+            status = {
+                "execution_enabled": self._execution_enabled,
+                "flag_file_exists": self.flag_file_path.exists(),
+                "flag_file_path": str(self.flag_file_path)
+            }
+            
+            if self.flag_file_path.exists():
+                try:
+                    import json
+                    with open(self.flag_file_path, 'r') as f:
+                        flag_data = json.load(f)
+                    status["emergency_data"] = flag_data
+                except Exception:
+                    status["emergency_data"] = {"error": "Could not read flag file"}
+            
+            return status
+
+# Initialize emergency kill switch
+emergency_kill = EmergencyKillSwitch(emergency_flag_path)
 
 # Perform startup audit integrity check
 print("Performing audit log integrity check...")
@@ -512,13 +641,21 @@ async def route_request(
                     detail="Helpers framework is disabled"
                 )
             
-            # Check execution gate for execute mode
+            # Check execution gate for execute mode (M6.3: Emergency Kill Switch)
             if request.execute:
-                execution_enabled = os.getenv("EXECUTION_ENABLED", "0") == "1"
-                if not execution_enabled:
+                if not emergency_kill.is_execution_enabled():
+                    # Check if it's due to emergency flag or normal configuration
+                    if emergency_flag_path.exists():
+                        error_detail = "Execution disabled (emergency kill)"
+                        error_code = "EMERGENCY_KILL_ACTIVE"
+                    else:
+                        error_detail = "Execution disabled"
+                        error_code = "EXECUTION_DISABLED"
+                    
                     raise HTTPException(
                         status_code=503,
-                        detail="Execution disabled"
+                        detail=error_detail,
+                        headers={"error_code": error_code}
                     )
             
             # Determine helper to use
@@ -1030,6 +1167,93 @@ async def verify_audit_integrity(auth: bool = Depends(verify_auth)) -> Dict[str,
         raise HTTPException(
             status_code=500,
             detail=f"Failed to verify audit integrity: {str(e)}"
+        )
+
+
+class EmergencyKillRequest(BaseModel):
+    """Request model for emergency kill endpoint."""
+    reason: Optional[str] = "Manual emergency kill triggered"
+    
+    @validator('reason')
+    def reason_must_not_be_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('reason field cannot be empty')
+        return v.strip()
+
+
+@app.post("/emergency/kill")
+async def emergency_kill_switch(
+    request: EmergencyKillRequest,
+    fastapi_request: Request,
+    auth: bool = Depends(verify_auth)
+) -> Dict[str, Any]:
+    """
+    Emergency kill switch - immediately disables all execute actions.
+    M6.3: Emergency Kill Switch Flow
+    
+    This is a fail-safe mechanism that:
+    - Immediately disables all helper execution
+    - Persists the disabled state to a flag file
+    - Requires manual file removal to re-enable execution
+    - Logs the emergency event for audit purposes
+    
+    Example usage:
+    curl -X POST "http://localhost:8787/emergency/kill" \\
+      -H "Content-Type: application/json" \\
+      -H "X-TinyIntent-Secret: your_secret" \\
+      -d '{"reason": "Runaway helper detected"}'
+    """
+    
+    # Get client info for audit trail
+    client_ip = fastapi_request.client.host if fastapi_request.client else "unknown"
+    user_agent = fastapi_request.headers.get("User-Agent", "unknown")
+    triggered_by = f"{client_ip} ({user_agent})"
+    
+    try:
+        # Trigger emergency kill
+        success = emergency_kill.trigger_emergency_kill(
+            reason=request.reason,
+            triggered_by=triggered_by
+        )
+        
+        if success:
+            return {
+                "status": "emergency_kill_activated",
+                "message": "Emergency kill switch activated - all execution disabled",
+                "reason": request.reason,
+                "triggered_by": triggered_by,
+                "flag_file": str(emergency_flag_path),
+                "recovery_instructions": f"To re-enable execution, manually remove: {emergency_flag_path}"
+            }
+        else:
+            return {
+                "status": "already_disabled",
+                "message": "Execution already disabled",
+                "current_status": emergency_kill.get_status()
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to trigger emergency kill: {str(e)}"
+        )
+
+
+@app.get("/emergency/status")
+async def emergency_status(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """Get current emergency kill switch status. M6.3"""
+    try:
+        status = emergency_kill.get_status()
+        status["recovery_instructions"] = (
+            f"To re-enable execution, manually remove: {emergency_flag_path}"
+            if not status["execution_enabled"] and status["flag_file_exists"]
+            else "Execution control via EXECUTION_ENABLED environment variable"
+        )
+        return status
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get emergency status: {str(e)}"
         )
 
 
