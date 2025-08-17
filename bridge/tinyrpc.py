@@ -3,6 +3,7 @@ TinyIntent Bridge MVP - FastAPI service for routing and orchestrating AI tasks.
 Implements M2: Experience Store with NDJSON and SQLite logging.
 """
 
+import json
 import os
 import re
 import shutil
@@ -34,111 +35,14 @@ def load_env_file():
 load_env_file()
 
 
-def sanitize_sensitive_data(data: Any) -> Any:
-    """
-    Sanitize any data structure by redacting sensitive information.
-    
-    This prevents secrets from being exposed in error responses, logs, or API responses.
-    Works recursively on dictionaries, lists, and strings.
-    
-    Args:
-        data: Any data structure (dict, list, str, etc.)
-        
-    Returns:
-        Sanitized data with sensitive values redacted
-    """
-    if isinstance(data, dict):
-        sanitized = {}
-        for key, value in data.items():
-            # Check if key is sensitive
-            key_lower = key.lower()
-            sensitive_key_patterns = [
-                'key', 'secret', 'password', 'token', 'auth', 'credential', 
-                'passphrase', 'private', 'cert', 'api_key', 'access_key',
-                'authorization', 'bearer', 'basic'
-            ]
-            
-            is_sensitive_key = any(pattern in key_lower for pattern in sensitive_key_patterns)
-            
-            if is_sensitive_key:
-                sanitized[key] = "****"
-            else:
-                sanitized[key] = sanitize_sensitive_data(value)
-        
-        return sanitized
-    
-    elif isinstance(data, list):
-        return [sanitize_sensitive_data(item) for item in data]
-    
-    elif isinstance(data, str):
-        return sanitize_sensitive_string(data)
-    
-    else:
-        return data
-
-
-def sanitize_sensitive_string(text: str) -> str:
-    """
-    Sanitize strings by redacting sensitive patterns.
-    
-    Args:
-        text: String to sanitize
-        
-    Returns:
-        String with sensitive patterns redacted
-    """
-    if not isinstance(text, str):
-        return text
-    
-    # Define patterns for sensitive information (order matters - more specific first)
-    sensitive_patterns = [
-        # Specific known secret prefixes
-        (r'sk_[A-Za-z0-9_]+', '****'),   # Secret keys starting with sk_
-        (r'pk_[A-Za-z0-9_]+', '****'),   # Public keys starting with pk_
-        (r'Bearer [A-Za-z0-9_.-]+', 'Bearer ****'),  # Bearer tokens
-        (r'Basic [A-Za-z0-9+/=]+', 'Basic ****'),    # Basic auth
-        (r'\bapi_[A-Za-z0-9_]{15,}\b', 'api_****'),      # API keys (long ones) with word boundaries
-        (r'\bsecret_[A-Za-z0-9_]{10,}\b', 'secret_****'), # Secret keys (long ones) with word boundaries
-        # Environment variable patterns (specific)
-        (r'[A-Z_]+(?:KEY|SECRET|PASSWORD|TOKEN)=[A-Za-z0-9_.-]{15,}', 
-         'REDACTED_ENV=****'),
-        # JSON-like patterns
-        (r'"[^"]*(?:key|secret|password|token|auth|credential)[^"]*"\s*:\s*"[^"]{15,}"', 
-         '"****": "****"'),
-        # Plain text password patterns
-        (r'\bpassword:\s+[A-Za-z0-9_.-]{10,}', 'password: ****'),
-        # Very long alphanumeric strings that look like secrets (40+ chars to be more conservative)
-        (r'\b[A-Za-z0-9_]{40,}\b', '****'),
-    ]
-    
-    sanitized_text = text
-    for pattern, replacement in sensitive_patterns:
-        sanitized_text = re.sub(pattern, replacement, sanitized_text, flags=re.IGNORECASE)
-    
-    return sanitized_text
-
-
-def sanitize_traceback(traceback_str: str) -> str:
-    """
-    Sanitize tracebacks by removing sensitive information.
-    
-    Args:
-        traceback_str: Traceback string
-        
-    Returns:
-        Sanitized traceback string
-    """
-    if not isinstance(traceback_str, str):
-        return traceback_str
-    
-    # Apply string sanitization to the traceback
-    return sanitize_sensitive_string(traceback_str)
+# Legacy sanitization functions are now imported from sanitize module
 
 
 from resolve import ModelResolver
 from store import experience_store
 from approval import approval_manager
 from episodes import episode_logger
+from sanitize import sanitize_dict, sanitize_text, safe_error_payload
 
 # Import audit log integrity system (M6.2)
 from logs.rotate import initialize_audit_logger, get_audit_logger
@@ -147,7 +51,7 @@ from logs.rotate import initialize_audit_logger, get_audit_logger
 import sys
 sys.path.append(str(Path(__file__).parent.parent / "helpers"))
 try:
-    from sdk import helper_registry, helper_executor
+    from sdk import helper_registry, helper_executor, CapabilityViolationError
     from reflector import reflector
     HELPERS_AVAILABLE = True
 except ImportError as e:
@@ -156,6 +60,7 @@ except ImportError as e:
     helper_registry = None
     helper_executor = None
     reflector = None
+    CapabilityViolationError = None
 
 
 # Initialize FastAPI app
@@ -869,6 +774,49 @@ async def route_request(
                     else:
                         raise
                 
+                except Exception as capability_error:
+                    # Check for capability violations (M6.5)
+                    if (CapabilityViolationError and 
+                        isinstance(capability_error, CapabilityViolationError)):
+                        
+                        # Log capability violation for audit
+                        audit_logger.log_entry({
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                            "action": "capability_violation",
+                            "helper_id": helper_id,
+                            "capability": capability_error.capability,
+                            "operation": capability_error.operation,
+                            "session_id": session_id,
+                            "success": False,
+                            "error_code": capability_error.error_code,
+                            "details": capability_error.details
+                        })
+                        
+                        # Log episode with capability violation
+                        episode_logger.log_episode(
+                            session_id=session_id,
+                            action="execute",
+                            helper_id=helper_id,
+                            input_data=helper_input,
+                            status_code=403,
+                            success=False,
+                            error_code="CAPABILITY_VIOLATION"
+                        )
+                        
+                        # Return HTTP 403 with capability violation details
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Helper capability violation: {str(capability_error)}",
+                            headers={
+                                "reason": "CAPABILITY_VIOLATION",
+                                "capability": capability_error.capability,
+                                "operation": capability_error.operation
+                            }
+                        )
+                    else:
+                        # Re-raise non-capability exceptions
+                        raise capability_error
+                
                 except RuntimeError as e:
                     # Check for sandbox violations
                     if "Sandbox violation:" in str(e):
@@ -920,6 +868,46 @@ async def route_request(
                         input_data=helper_input,
                         session_id=session_id
                     )
+                except Exception as capability_error:
+                    # Check for capability violations in preview mode (M6.5)
+                    if (CapabilityViolationError and 
+                        isinstance(capability_error, CapabilityViolationError)):
+                        
+                        # Log capability violation for audit
+                        audit_logger.log_entry({
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                            "action": "capability_violation",
+                            "helper_id": helper_id,
+                            "capability": capability_error.capability,
+                            "operation": capability_error.operation,
+                            "session_id": session_id,
+                            "success": False,
+                            "error_code": capability_error.error_code,
+                            "details": capability_error.details
+                        })
+                        
+                        # Log episode with capability violation
+                        episode_logger.log_episode(
+                            session_id=session_id,
+                            action="preview",
+                            helper_id=helper_id,
+                            input_data=helper_input,
+                            status_code=403,
+                            success=False,
+                            error_code="CAPABILITY_VIOLATION"
+                        )
+                        
+                        # Return HTTP 403 with capability violation details
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Helper capability violation: {str(capability_error)}",
+                            headers={
+                                "reason": "CAPABILITY_VIOLATION",
+                                "capability": capability_error.capability,
+                                "operation": capability_error.operation
+                            }
+                        )
+                
                 except RuntimeError as e:
                     # Check for sandbox violations in preview mode
                     if "Sandbox violation:" in str(e):
@@ -943,7 +931,7 @@ async def route_request(
                         )
                     else:
                         # Regular runtime error
-                        sanitized_error = sanitize_sensitive_string(str(e))
+                        sanitized_error = sanitize_text(str(e))
                         raise HTTPException(
                             status_code=500,
                             detail=f"Helper preview failed: {sanitized_error}",
@@ -1061,7 +1049,12 @@ async def route_request(
             # Log failed episode for HTTP exceptions
             error_code = None
             if e.status_code == 403:
-                error_code = "APPROVAL_FAILED"
+                # Check if it's a capability violation or approval failure
+                reason_header = e.headers.get("reason") if hasattr(e, 'headers') else None
+                if reason_header == "CAPABILITY_VIOLATION":
+                    error_code = "CAPABILITY_VIOLATION"
+                else:
+                    error_code = "APPROVAL_FAILED"
             elif e.status_code == 409:
                 error_code = "MISSING_ENVIRONMENT"
             elif e.status_code == 500:
@@ -1107,7 +1100,7 @@ async def route_request(
             )
             
             # Sanitize error message before returning to client
-            sanitized_error = sanitize_sensitive_string(str(e))
+            sanitized_error = sanitize_text(str(e))
             
             raise HTTPException(
                 status_code=500,

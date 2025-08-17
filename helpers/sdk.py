@@ -103,6 +103,13 @@ except ImportError:
     AUDIT_LOGGER_AVAILABLE = False
     get_audit_logger = None
 
+# Import centralized sanitization
+try:
+    from sanitize import sanitize_dict, sanitize_text, sanitize_env
+    CENTRALIZED_SANITIZATION = True
+except ImportError:
+    CENTRALIZED_SANITIZATION = False
+
 
 class SandboxViolationError(Exception):
     """Exception raised when helper execution violates sandbox limits."""
@@ -113,12 +120,24 @@ class SandboxViolationError(Exception):
         self.details = details or {}
 
 
-class HelperSandbox:
-    """Enhanced sandbox for helper execution with resource limits."""
+class CapabilityViolationError(Exception):
+    """Exception raised when helper execution violates capability restrictions."""
     
-    def __init__(self, helper_id: str, audit_log_path: Path):
+    def __init__(self, message: str, capability: str, operation: str, details: Dict[str, Any] = None):
+        super().__init__(message)
+        self.error_code = "CAPABILITY_VIOLATION"
+        self.capability = capability
+        self.operation = operation
+        self.details = details or {}
+
+
+class HelperSandbox:
+    """Enhanced sandbox for helper execution with resource limits and capability isolation."""
+    
+    def __init__(self, helper_id: str, audit_log_path: Path, capabilities: List[str] = None):
         self.helper_id = helper_id
         self.audit_log_path = audit_log_path
+        self.capabilities = capabilities or []  # M6.5: Helper capabilities
         
         # Default sandbox limits
         self.max_cpu_time = 10  # seconds
@@ -137,6 +156,68 @@ class HelperSandbox:
             self.max_execution_time = execution_time
         if output_size is not None:
             self.max_output_size = output_size
+    
+    def _enforce_capability_restrictions(self, env: Dict[str, str]) -> Dict[str, str]:
+        """
+        Enforce capability restrictions on environment and prepare restrictive environment.
+        
+        Args:
+            env: Original environment dictionary
+            
+        Returns:
+            Modified environment dictionary with capability restrictions applied
+        """
+        restricted_env = env.copy()
+        
+        # Network capability enforcement
+        if "network" not in self.capabilities:
+            # Remove network-related environment variables
+            network_env_vars = [
+                'http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
+                'ftp_proxy', 'FTP_PROXY', 'no_proxy', 'NO_PROXY',
+                'all_proxy', 'ALL_PROXY', 'socks_proxy', 'SOCKS_PROXY'
+            ]
+            for var in network_env_vars:
+                restricted_env.pop(var, None)
+            
+            # Add environment flag to indicate network restrictions
+            restricted_env['TINYINTENT_NETWORK_DISABLED'] = '1'
+        
+        # Filesystem capability enforcement
+        if "filesystem" not in self.capabilities:
+            # Add environment flag to indicate filesystem restrictions
+            restricted_env['TINYINTENT_FILESYSTEM_RESTRICTED'] = '1'
+            # Set a restricted temporary directory
+            import tempfile
+            restricted_temp = tempfile.mkdtemp(prefix=f"helper_{self.helper_id}_")
+            restricted_env['TMPDIR'] = restricted_temp
+            restricted_env['TEMP'] = restricted_temp
+            restricted_env['TMP'] = restricted_temp
+        
+        return restricted_env
+    
+    def _check_capability_violation(self, operation: str, capability: str) -> None:
+        """
+        Check if an operation violates capability restrictions.
+        
+        Args:
+            operation: Description of the operation being attempted
+            capability: Required capability for the operation
+            
+        Raises:
+            CapabilityViolationError: If capability not granted
+        """
+        if capability not in self.capabilities:
+            raise CapabilityViolationError(
+                f"Helper {self.helper_id} attempted {operation} without {capability} capability",
+                capability=capability,
+                operation=operation,
+                details={
+                    "helper_id": self.helper_id,
+                    "granted_capabilities": self.capabilities,
+                    "required_capability": capability
+                }
+            )
     
     def _create_preexec_fn(self):
         """Create preexec function to set resource limits on child process."""
@@ -180,23 +261,26 @@ class HelperSandbox:
     def execute(self, cmd: List[str], input_data: str, env: Dict[str, str], 
                 cwd: Path) -> Dict[str, Any]:
         """
-        Execute command in sandboxed environment with resource limits.
+        Execute command in sandboxed environment with resource limits and capability isolation.
         
         Returns:
             dict: Execution result or structured error
         """
+        # M6.5: Apply capability restrictions to environment
+        restricted_env = self._enforce_capability_restrictions(env)
+        
         preexec_fn = self._create_preexec_fn()
         process = None
         
         try:
-            # Start the process
+            # Start the process with capability-restricted environment
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                env=env,
+                env=restricted_env,  # Use restricted environment
                 cwd=cwd,
                 preexec_fn=preexec_fn
             )
@@ -452,6 +536,7 @@ class HelperRegistryEntry:
         self.requires_approval = registry_data.get("requires_approval", False)
         self.required_envs = registry_data.get("required_envs", [])
         self.safety_notes = registry_data.get("safety_notes", "")
+        self.capabilities = registry_data.get("capabilities", [])  # M6.5: Capability isolation
         
         # Validation state
         self.is_valid = True
@@ -486,6 +571,10 @@ class HelperRegistryEntry:
             self.validation_errors.append(error_msg)
             self.is_valid = False
     
+    def has_capability(self, capability: str) -> bool:
+        """Check if helper has a specific capability."""
+        return capability in self.capabilities
+    
     def get_validation_summary(self) -> Dict[str, Any]:
         """Get validation summary for this registry entry."""
         return {
@@ -496,7 +585,8 @@ class HelperRegistryEntry:
             "missing_envs": self.missing_envs,
             "validation_errors": self.validation_errors,
             "required_envs": self.required_envs,
-            "safety_notes": self.safety_notes
+            "safety_notes": self.safety_notes,
+            "capabilities": self.capabilities  # M6.5: Include capabilities in summary
         }
 
 
@@ -588,7 +678,10 @@ class HelperRegistry:
         timestamp = datetime.utcnow().isoformat() + 'Z'
         
         # Sanitize environment variable names for logging
-        current_env = sanitize_env(dict(os.environ))
+        if CENTRALIZED_SANITIZATION:
+            current_env = sanitize_env(dict(os.environ))
+        else:
+            current_env = sanitize_env(dict(os.environ))  # Use local function
         
         audit_entry = {
             "ts": timestamp,
@@ -813,8 +906,12 @@ class HelperExecutor:
         # Prepare input JSON
         input_json = json.dumps(input_data)
         
-        # Create enhanced sandbox
-        sandbox = HelperSandbox(helper.helper_id, self.audit_log)
+        # M6.5: Get capabilities from registry for capability isolation
+        registry_entry = self.registry.get_registry_entry(helper.helper_id)
+        capabilities = registry_entry.capabilities if registry_entry else []
+        
+        # Create enhanced sandbox with capability restrictions
+        sandbox = HelperSandbox(helper.helper_id, self.audit_log, capabilities)
         
         # Configure sandbox limits from helper manifest and mode
         timeout = helper.get_timeout(mode)
@@ -842,6 +939,18 @@ class HelperExecutor:
         try:
             # Execute in sandbox
             return sandbox.execute(cmd, input_json, env, helper.helper_dir)
+            
+        except CapabilityViolationError as e:
+            # M6.5: Handle capability violations
+            self._log_audit(
+                "capability_violation",
+                helper.helper_id,
+                input_data,
+                error=f"{e.error_code}: {str(e)}"
+            )
+            
+            # Re-raise as CapabilityViolationError for HTTP 403 handling
+            raise e
             
         except SandboxViolationError as e:
             # Convert sandbox violations to structured errors
@@ -887,6 +996,10 @@ class HelperExecutor:
         Returns:
             Sanitized input data with sensitive values redacted
         """
+        if CENTRALIZED_SANITIZATION:
+            return sanitize_dict(input_data)
+        
+        # Fallback to legacy local sanitization
         if not isinstance(input_data, dict):
             return input_data
         
@@ -939,6 +1052,10 @@ class HelperExecutor:
         Returns:
             Sanitized error message
         """
+        if CENTRALIZED_SANITIZATION:
+            return sanitize_text(error_msg)
+        
+        # Fallback to legacy local sanitization
         if not isinstance(error_msg, str):
             return error_msg
         

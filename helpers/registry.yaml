@@ -18,6 +18,8 @@ helpers:
       - "EXCHANGE_API_KEY"
       - "EXCHANGE_SECRET"
       - "EXCHANGE_PASSPHRASE"
+    capabilities:
+      - network
     safety_notes: "HIGH RISK: This helper can execute real trades and close positions. Ensure exchange credentials are for correct account and consider using sandbox mode for testing."
     
   log_tailer:
@@ -30,6 +32,8 @@ helpers:
     manifest_path: "helpers/log_tailer/helper.yaml"
     requires_approval: false
     required_envs: []
+    capabilities:
+      - filesystem
     safety_notes: "Low risk helper for log monitoring. Only reads log files, no system modifications."
     
   ssh_ops:
@@ -44,6 +48,9 @@ helpers:
     required_envs:
       - "SSH_HOST"
       - "SSH_USER"
+    capabilities:
+      - network
+      - filesystem
     safety_notes: "Medium risk helper for remote server management. Requires SSH access credentials. Can restart services and affect system state."
 
 # Global settings
