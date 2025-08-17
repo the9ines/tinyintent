@@ -16,6 +16,7 @@ import uvicorn
 
 from resolve import ModelResolver
 from store import experience_store
+from approval import approval_manager
 
 # Import helpers framework (with fallback for missing dependencies)
 import sys
@@ -51,6 +52,9 @@ class RouteRequest(BaseModel):
     session_id: Optional[str] = None  # Session ID for episode tracking
     helper_id: Optional[str] = None  # Specific helper for act route
     helper_input: Optional[Dict[str, Any]] = None  # Direct helper input
+    # Guarded execution fields
+    execute: Optional[bool] = False  # True to execute, False for preview (default)
+    approval_token: Optional[str] = None  # Required for execute=True
     
     @validator('text')
     def text_must_not_be_empty(cls, v):
@@ -438,12 +442,44 @@ async def route_request(
                 # Use LLM to extract structured input from natural language
                 helper_input = extract_helper_input(request.text, helper_id, model_to_use)
             
-            # Execute helper in preview mode
-            helper_result = helper_executor.preview(
-                helper_id=helper_id,
-                input_data=helper_input,
-                session_id=session_id
-            )
+            # Determine execution mode
+            execution_mode = "execute" if request.execute else "preview"
+            
+            # Handle guarded execution flow
+            if request.execute:
+                # Validate approval token for execution
+                is_valid, error_msg = approval_manager.validate_approval_token(
+                    request.approval_token, helper_id, helper_input, request.text
+                )
+                
+                if not is_valid:
+                    # Log failed approval attempt
+                    experience_store.log_request(
+                        session_id=session_id,
+                        text=request.text,
+                        route_final="act",
+                        helper_id=helper_id,
+                        success=False,
+                        error_code="APPROVAL_FAILED"
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail=error_msg
+                    )
+                
+                # Execute helper (this would be implemented in M5+)
+                # For now, return error as execute mode is not yet implemented
+                raise HTTPException(
+                    status_code=501,
+                    detail="Helper execution mode not yet implemented - M5 feature"
+                )
+            else:
+                # Execute helper in preview mode
+                helper_result = helper_executor.preview(
+                    helper_id=helper_id,
+                    input_data=helper_input,
+                    session_id=session_id
+                )
             
             # Apply reflection layer validation
             reflection_enabled = os.getenv("REFLECTION_ENABLED", "1") == "1"
@@ -471,6 +507,20 @@ async def route_request(
                     # Don't fail the request if reflection fails, but log it
                     helper_result["reflection_error"] = str(e)
             
+            # Generate approval token for preview mode if helper supports execution
+            approval_token = None
+            if not request.execute and helper_result.get("status") == "success":
+                # Check if helper requires approval for execution
+                helper_manifest = helper_registry.get_helper(helper_id)
+                if helper_manifest and helper_manifest.can_execute():
+                    approval_token = approval_manager.generate_approval_token(
+                        helper_id=helper_id,
+                        helper_input=helper_input,
+                        session_id=session_id,
+                        user_text=request.text
+                    )
+                    helper_result["approval_token"] = approval_token
+            
             end_time = time.time()
             latency_ms = int((end_time - start_time) * 1000)
             
@@ -491,8 +541,8 @@ async def route_request(
                 route_used="act",
                 session_id=session_id,
                 latency_ms=latency_ms,
-                action=helper_result.get("action"),
-                helper_id=helper_result.get("helper_id"),
+                action=execution_mode,
+                helper_id=helper_result.get("helper_id", helper_id),
                 preview_json=helper_result.get("preview_json"),
                 approval_token=helper_result.get("approval_token"),
                 reflection=helper_result.get("reflection"),
