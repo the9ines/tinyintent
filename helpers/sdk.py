@@ -149,6 +149,69 @@ class HelperManifest:
         return self.capabilities.get("emergency_close", False)
 
 
+class HelperRegistryEntry:
+    """Represents a helper entry from registry.yaml with validation state."""
+    
+    def __init__(self, helper_id: str, registry_data: Dict[str, Any]):
+        self.helper_id = helper_id
+        self.name = registry_data.get("name", helper_id)
+        self.description = registry_data.get("description", "")
+        self.enabled = registry_data.get("enabled", True)
+        self.category = registry_data.get("category", "unknown")
+        self.risk_level = registry_data.get("risk_level", "medium")
+        self.can_execute = registry_data.get("can_execute", True)
+        self.manifest_path = registry_data.get("manifest_path", f"helpers/{helper_id}/helper.yaml")
+        self.requires_approval = registry_data.get("requires_approval", False)
+        self.required_envs = registry_data.get("required_envs", [])
+        self.safety_notes = registry_data.get("safety_notes", "")
+        
+        # Validation state
+        self.is_valid = True
+        self.validation_errors = []
+        self.env_validation_passed = True
+        self.missing_envs = []
+        
+        # Perform validation
+        self._validate_environment()
+        self._validate_enabled()
+    
+    def _validate_environment(self):
+        """Validate that required environment variables are present."""
+        missing = []
+        for env_var in self.required_envs:
+            if env_var not in os.environ:
+                missing.append(env_var)
+        
+        if missing:
+            self.env_validation_passed = False
+            self.missing_envs = missing
+            self.can_execute = False  # Automatically disable execution
+            error_msg = f"Missing required environment variables: {', '.join(missing)}"
+            self.validation_errors.append(error_msg)
+            self.is_valid = False
+    
+    def _validate_enabled(self):
+        """Validate that helper is enabled."""
+        if not self.enabled:
+            self.can_execute = False
+            error_msg = "Helper is disabled in registry"
+            self.validation_errors.append(error_msg)
+            self.is_valid = False
+    
+    def get_validation_summary(self) -> Dict[str, Any]:
+        """Get validation summary for this registry entry."""
+        return {
+            "helper_id": self.helper_id,
+            "is_valid": self.is_valid,
+            "can_execute": self.can_execute,
+            "env_validation_passed": self.env_validation_passed,
+            "missing_envs": self.missing_envs,
+            "validation_errors": self.validation_errors,
+            "required_envs": self.required_envs,
+            "safety_notes": self.safety_notes
+        }
+
+
 class HelperRegistry:
     """Manages the registry of available helpers."""
     
@@ -163,10 +226,13 @@ class HelperRegistry:
         
         self.registry_file = self.helpers_dir / "registry.yaml"
         self.helpers: Dict[str, HelperManifest] = {}
+        self.registry_entries: Dict[str, HelperRegistryEntry] = {}
+        self.audit_log = Path(__file__).parent.parent / "bridge" / "logs" / "audit.log"
+        self.audit_log.parent.mkdir(parents=True, exist_ok=True)
         self.load_registry()
     
     def load_registry(self):
-        """Load helper registry from registry.yaml."""
+        """Load helper registry from registry.yaml with validation."""
         try:
             if not self.registry_file.exists():
                 print(f"Warning: Registry file not found: {self.registry_file}")
@@ -181,34 +247,73 @@ class HelperRegistry:
             if isinstance(helpers_data, dict):
                 # Dict format: {helper_id: {info}}
                 for helper_id, helper_info in helpers_data.items():
-                    enabled = helper_info.get("enabled", True)
-                    if not enabled:
-                        continue
-                    
-                    try:
-                        self._load_helper(helper_id)
-                    except Exception as e:
-                        print(f"Warning: Failed to load helper {helper_id}: {e}")
+                    self._load_helper_with_validation(helper_id, helper_info)
             else:
                 # List format: [{id: helper_id, ...}]
                 for helper_info in helpers_data:
                     helper_id = helper_info.get("id")
-                    if not helper_id:
-                        continue
-                    
-                    enabled = helper_info.get("enabled", True)
-                    if not enabled:
-                        continue
-                    
-                    try:
-                        self._load_helper(helper_id)
-                    except Exception as e:
-                        print(f"Warning: Failed to load helper {helper_id}: {e}")
+                    if helper_id:
+                        self._load_helper_with_validation(helper_id, helper_info)
             
-            print(f"Loaded {len(self.helpers)} helpers")
+            # Summary
+            valid_helpers = len([h for h in self.registry_entries.values() if h.is_valid])
+            total_helpers = len(self.registry_entries)
+            print(f"Loaded {valid_helpers}/{total_helpers} helpers ({len(self.helpers)} with manifests)")
+            
+            # Log any validation failures
+            invalid_helpers = [h for h in self.registry_entries.values() if not h.is_valid]
+            for helper_entry in invalid_helpers:
+                self._log_validation_failure(helper_entry)
             
         except Exception as e:
             print(f"Error loading helper registry: {e}")
+    
+    def _load_helper_with_validation(self, helper_id: str, helper_info: Dict[str, Any]):
+        """Load helper with registry-level and manifest validation."""
+        try:
+            # Create registry entry with validation
+            registry_entry = HelperRegistryEntry(helper_id, helper_info)
+            self.registry_entries[helper_id] = registry_entry
+            
+            # Skip if disabled
+            if not registry_entry.enabled:
+                return
+            
+            # Skip if registry validation failed
+            if not registry_entry.is_valid:
+                return
+            
+            # Try to load helper manifest
+            try:
+                self._load_helper(helper_id)
+            except Exception as e:
+                # Mark as invalid due to manifest issues
+                registry_entry.is_valid = False
+                registry_entry.validation_errors.append(f"Manifest loading failed: {e}")
+                print(f"Warning: Failed to load helper {helper_id}: {e}")
+                
+        except Exception as e:
+            print(f"Warning: Failed to process helper {helper_id}: {e}")
+    
+    def _log_validation_failure(self, helper_entry: HelperRegistryEntry):
+        """Log helper validation failure to audit log."""
+        timestamp = datetime.utcnow().isoformat() + 'Z'
+        
+        audit_entry = {
+            "ts": timestamp,
+            "action": "helper_validation_failure",
+            "helper_id": helper_entry.helper_id,
+            "validation_errors": helper_entry.validation_errors,
+            "missing_envs": helper_entry.missing_envs,
+            "required_envs": helper_entry.required_envs,
+            "success": False
+        }
+        
+        try:
+            with open(self.audit_log, 'a') as f:
+                f.write(json.dumps(audit_entry) + '\n')
+        except Exception as e:
+            print(f"Warning: Failed to write validation audit log: {e}")
     
     def _load_helper(self, helper_id: str):
         """Load individual helper manifest."""
@@ -225,16 +330,47 @@ class HelperRegistry:
         self.helpers[helper_id] = helper
     
     def get_helper(self, helper_id: str) -> Optional[HelperManifest]:
-        """Get helper by ID."""
+        """Get helper by ID if it's valid and has a loaded manifest."""
         return self.helpers.get(helper_id)
     
+    def get_registry_entry(self, helper_id: str) -> Optional[HelperRegistryEntry]:
+        """Get registry entry by ID (includes validation state)."""
+        return self.registry_entries.get(helper_id)
+    
+    def is_helper_valid(self, helper_id: str) -> bool:
+        """Check if helper passed all validation checks."""
+        entry = self.registry_entries.get(helper_id)
+        return entry.is_valid if entry else False
+    
+    def get_helper_validation_errors(self, helper_id: str) -> List[str]:
+        """Get validation errors for a helper."""
+        entry = self.registry_entries.get(helper_id)
+        return entry.validation_errors if entry else [f"Helper {helper_id} not found"]
+    
     def list_helpers(self) -> List[str]:
-        """List all available helper IDs."""
+        """List all available helper IDs (only valid ones with loaded manifests)."""
         return list(self.helpers.keys())
+    
+    def list_all_helpers(self) -> List[str]:
+        """List all helper IDs from registry (including invalid ones)."""
+        return list(self.registry_entries.keys())
+    
+    def get_validation_summary(self) -> Dict[str, Any]:
+        """Get comprehensive validation summary for all helpers."""
+        return {
+            "total_helpers": len(self.registry_entries),
+            "valid_helpers": len([h for h in self.registry_entries.values() if h.is_valid]),
+            "loaded_manifests": len(self.helpers),
+            "helpers": {
+                helper_id: entry.get_validation_summary()
+                for helper_id, entry in self.registry_entries.items()
+            }
+        }
     
     def reload(self):
         """Reload all helpers from registry."""
         self.helpers.clear()
+        self.registry_entries.clear()
         self.load_registry()
 
 
@@ -249,6 +385,11 @@ class HelperExecutor:
     def preview(self, helper_id: str, input_data: Dict[str, Any], 
                 session_id: str = None) -> Dict[str, Any]:
         """Execute helper in preview mode."""
+        # Check if helper is valid in registry
+        if not self.registry.is_helper_valid(helper_id):
+            validation_errors = self.registry.get_helper_validation_errors(helper_id)
+            raise ValueError(f"Helper {helper_id} failed validation: {'; '.join(validation_errors)}")
+        
         helper = self.registry.get_helper(helper_id)
         if not helper:
             raise ValueError(f"Helper not found: {helper_id}")
@@ -287,6 +428,11 @@ class HelperExecutor:
                 session_id: str = None, token_id: str = None, 
                 idempotency_key: str = None) -> Dict[str, Any]:
         """Execute helper in execution mode."""
+        # Check if helper is valid in registry
+        if not self.registry.is_helper_valid(helper_id):
+            validation_errors = self.registry.get_helper_validation_errors(helper_id)
+            raise ValueError(f"Helper {helper_id} failed validation: {'; '.join(validation_errors)}")
+        
         helper = self.registry.get_helper(helper_id)
         if not helper:
             raise ValueError(f"Helper not found: {helper_id}")
