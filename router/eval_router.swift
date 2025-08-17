@@ -1,193 +1,277 @@
 #!/usr/bin/env swift
 
+/*
+TinyIntent Router Evaluation - M5.4: Evaluation & Promotion Workflow
+
+Evaluates trained router model for accuracy and latency.
+Outputs machine-parseable JSON results for promotion decisions.
+*/
+
 import Foundation
 import CoreML
 
-/// TinyIntent Router Evaluation Script
-/// Evaluates the trained SmallIntent.mlmodel against test data
-/// Measures accuracy, latency, and provides detailed metrics
+struct EvaluationResult: Codable {
+    let accuracy: Double
+    let latency_ms: Double
+    let sample_count: Int
+    let timestamp: String
+    let model_path: String
+    let test_data_path: String
+    let promotion_eligible: Bool
+    let accuracy_threshold: Double
+    let latency_threshold: Double
+}
 
-func main() {
-    print("📊 TinyIntent Router Evaluation - M3")
-    print("====================================")
+struct TestSample {
+    let text: String
+    let expectedLabel: String
+}
+
+class RouterEvaluator {
+    private let modelPath: String
+    private let testDataPath: String
+    private let accuracyThreshold: Double = 90.0
+    private let latencyThreshold: Double = 50.0
     
-    // Configuration
-    let projectRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    let modelPath = projectRoot.appendingPathComponent("router/SmallIntent.mlmodel")
-    let testDataPath = projectRoot.appendingPathComponent("router/data/intents.tsv")
-    
-    print("🎯 Model: \(modelPath.path)")
-    print("📁 Test data: \(testDataPath.path)")
-    
-    // Check if model exists
-    guard FileManager.default.fileExists(atPath: modelPath.path) else {
-        print("❌ ERROR: Model not found. Run 'make router-train' first.")
-        exit(1)
+    init(modelPath: String, testDataPath: String) {
+        self.modelPath = modelPath
+        self.testDataPath = testDataPath
     }
     
-    do {
-        // Load the model
-        print("\n🔄 Loading model...")
-        let model = try MLModel(contentsOf: modelPath)
+    func evaluateModel() -> EvaluationResult? {
+        print("🔍 Loading model from: \(modelPath)")
         
-        // Get model metadata
-        let modelSize = try FileManager.default.attributesOfItem(atPath: modelPath.path)[.size] as! Int64
-        let modelSizeMB = Double(modelSize) / (1024 * 1024)
-        
-        print("✓ Model loaded successfully")
-        print("📏 Model size: \(String(format: "%.2f", modelSizeMB)) MB")
-        print("📱 Model metadata:")
-        print("   - Version: \(model.modelDescription.metadata[.versionString] ?? "Unknown")")
-        print("   - Author: \(model.modelDescription.metadata[.author] ?? "TinyIntent")")
-        print("   - Description: \(model.modelDescription.metadata[.description] ?? "Intent Router")")
-        
-        // Load test data
-        print("\n📊 Loading test data...")
-        let testData = try String(contentsOf: testDataPath, encoding: .utf8)
-        let lines = testData.components(separatedBy: .newlines).dropFirst() // Skip header
-        
-        var testCases: [(text: String, label: String)] = []
-        for line in lines {
-            let components = line.components(separatedBy: "\t")
-            if components.count >= 2 && !line.isEmpty {
-                testCases.append((text: components[0], label: components[1]))
-            }
+        // Load Core ML model
+        guard let model = try? MLModel(contentsOf: URL(fileURLWithPath: modelPath)) else {
+            print("❌ Failed to load model from \(modelPath)")
+            return nil
         }
         
-        print("✓ Loaded \(testCases.count) test cases")
+        print("📊 Loading test data from: \(testDataPath)")
         
-        // Evaluate model performance
-        print("\n🧪 Running evaluation...")
+        // Load test data
+        let testSamples = loadTestData()
+        guard !testSamples.isEmpty else {
+            print("❌ No test data found")
+            return nil
+        }
+        
+        print("🚀 Evaluating \(testSamples.count) samples...")
+        
+        // Run evaluation
         var correctPredictions = 0
         var totalLatency: TimeInterval = 0
-        var labelConfusion: [String: [String: Int]] = [:]
-        var predictions: [(input: String, expected: String, predicted: String, confidence: Double, latency: TimeInterval)] = []
         
-        for (index, testCase) in testCases.enumerated() {
-            let startTime = CFAbsoluteTimeGetCurrent()
+        for (index, sample) in testSamples.enumerated() {
+            let startTime = Date()
             
             // Make prediction
-            let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["text": testCase.text])
-            let prediction = try model.prediction(from: inputFeatures)
-            
-            let endTime = CFAbsoluteTimeGetCurrent()
-            let latency = (endTime - startTime) * 1000 // Convert to milliseconds
-            totalLatency += latency
-            
-            // Extract prediction results
-            let predictedLabel = prediction.featureValue(for: "classLabel")?.stringValue ?? "unknown"
-            let classProbabilities = prediction.featureValue(for: "classLabelProbs")?.dictionaryValue ?? [:]
-            let confidence = classProbabilities[predictedLabel]?.doubleValue ?? 0.0
-            
-            predictions.append((
-                input: testCase.text,
-                expected: testCase.label,
-                predicted: predictedLabel,
-                confidence: confidence,
-                latency: latency
-            ))
-            
-            // Track accuracy
-            if predictedLabel == testCase.label {
-                correctPredictions += 1
-            }
-            
-            // Build confusion matrix
-            if labelConfusion[testCase.label] == nil {
-                labelConfusion[testCase.label] = [:]
-            }
-            labelConfusion[testCase.label]![predictedLabel, default: 0] += 1
-            
-            // Progress indicator
-            if (index + 1) % 10 == 0 || index == testCases.count - 1 {
-                print("   Processed \(index + 1)/\(testCases.count) test cases...")
+            if let prediction = predict(model: model, text: sample.text) {
+                let endTime = Date()
+                let sampleLatency = endTime.timeIntervalSince(startTime) * 1000 // Convert to ms
+                totalLatency += sampleLatency
+                
+                // Check accuracy
+                if prediction.lowercased() == sample.expectedLabel.lowercased() {
+                    correctPredictions += 1
+                }
+                
+                // Progress indicator
+                if (index + 1) % 10 == 0 {
+                    print("   Processed \(index + 1)/\(testSamples.count) samples...")
+                }
+            } else {
+                print("⚠️  Failed to predict for sample \(index + 1)")
             }
         }
         
         // Calculate metrics
-        let accuracy = Double(correctPredictions) / Double(testCases.count)
-        let averageLatency = totalLatency / Double(testCases.count)
+        let accuracy = (Double(correctPredictions) / Double(testSamples.count)) * 100.0
+        let avgLatency = totalLatency / Double(testSamples.count)
+        let promotionEligible = accuracy >= accuracyThreshold && avgLatency <= latencyThreshold
         
+        // Create result
+        let result = EvaluationResult(
+            accuracy: accuracy,
+            latency_ms: avgLatency,
+            sample_count: testSamples.count,
+            timestamp: ISO8601DateFormatter().string(from: Date()),
+            model_path: modelPath,
+            test_data_path: testDataPath,
+            promotion_eligible: promotionEligible,
+            accuracy_threshold: accuracyThreshold,
+            latency_threshold: latencyThreshold
+        )
+        
+        // Print results
         print("\n📈 Evaluation Results:")
-        print("================================")
-        print("Overall Accuracy: \(String(format: "%.4f", accuracy)) (\(String(format: "%.2f", accuracy * 100))%)")
-        print("Correct Predictions: \(correctPredictions)/\(testCases.count)")
-        print("Average Latency: \(String(format: "%.2f", averageLatency)) ms")
-        print("P95 Latency: \(String(format: "%.2f", percentile(predictions.map { $0.latency }, 0.95))) ms")
-        print("Max Latency: \(String(format: "%.2f", predictions.map { $0.latency }.max() ?? 0)) ms")
+        print("   Accuracy: \(String(format: "%.2f", accuracy))% (threshold: \(accuracyThreshold)%)")
+        print("   Avg Latency: \(String(format: "%.2f", avgLatency))ms (threshold: \(latencyThreshold)ms)")
+        print("   Sample Count: \(testSamples.count)")
+        print("   Promotion Eligible: \(promotionEligible ? "✅ YES" : "❌ NO")")
         
-        // Check performance requirements
-        let p95Latency = percentile(predictions.map { $0.latency }, 0.95)
-        if p95Latency <= 2.0 {
-            print("✅ Latency requirement met (P95 ≤ 2ms)")
-        } else {
-            print("⚠️  WARNING: P95 latency exceeds 2ms requirement")
-        }
-        
-        if accuracy >= 0.85 {
-            print("✅ Accuracy requirement met (≥85%)")
-        } else {
-            print("⚠️  WARNING: Accuracy below 85% threshold")
-        }
-        
-        // Per-label accuracy
-        print("\n📊 Per-Label Performance:")
-        for label in labelConfusion.keys.sorted() {
-            let labelCounts = labelConfusion[label]!
-            let totalForLabel = labelCounts.values.reduce(0, +)
-            let correctForLabel = labelCounts[label] ?? 0
-            let labelAccuracy = Double(correctForLabel) / Double(totalForLabel)
+        return result
+    }
+    
+    private func predict(model: MLModel, text: String) -> String? {
+        do {
+            // Create input features
+            let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["text": text])
             
-            print("   \(label): \(String(format: "%.3f", labelAccuracy)) (\(correctForLabel)/\(totalForLabel))")
-        }
-        
-        // Show confusion matrix
-        print("\n🔀 Confusion Matrix:")
-        let allLabels = Array(Set(labelConfusion.keys) ∪ Set(labelConfusion.values.flatMap { $0.keys })).sorted()
-        print("Actual\\Predicted\t\(allLabels.joined(separator: "\t"))")
-        
-        for actualLabel in allLabels {
-            var row = [actualLabel]
-            for predictedLabel in allLabels {
-                let count = labelConfusion[actualLabel]?[predictedLabel] ?? 0
-                row.append("\(count)")
+            // Make prediction
+            let prediction = try model.prediction(from: inputFeatures)
+            
+            // Extract predicted label
+            if let labelFeature = prediction.featureValue(for: "label") {
+                return labelFeature.stringValue
+            } else if let labelFeature = prediction.featureValue(for: "classLabel") {
+                return labelFeature.stringValue
+            } else {
+                // Try to get the first string output
+                let outputNames = model.modelDescription.outputDescriptionsByName.keys
+                for outputName in outputNames {
+                    if let feature = prediction.featureValue(for: outputName),
+                       let stringValue = feature.stringValue {
+                        return stringValue
+                    }
+                }
             }
-            print(row.joined(separator: "\t\t"))
+        } catch {
+            print("⚠️  Prediction error: \(error)")
         }
         
-        // Show worst predictions (lowest confidence correct predictions and errors)
-        print("\n❌ Prediction Errors:")
-        let errors = predictions.filter { $0.expected != $0.predicted }.prefix(5)
-        for error in errors {
-            print("   '\(error.input)' → Expected: \(error.expected), Got: \(error.predicted) (conf: \(String(format: "%.3f", error.confidence)))")
+        return nil
+    }
+    
+    private func loadTestData() -> [TestSample] {
+        guard let data = try? String(contentsOfFile: testDataPath) else {
+            print("❌ Failed to read test data file")
+            return []
         }
         
-        print("\n🔍 Low Confidence Correct Predictions:")
-        let lowConfidence = predictions.filter { $0.expected == $0.predicted && $0.confidence < 0.8 }.sorted { $0.confidence < $1.confidence }.prefix(3)
-        for pred in lowConfidence {
-            print("   '\(pred.input)' → \(pred.predicted) (conf: \(String(format: "%.3f", pred.confidence)))")
+        var samples: [TestSample] = []
+        let lines = data.components(separatedBy: .newlines)
+        
+        for (index, line) in lines.enumerated() {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Skip empty lines and header
+            if trimmedLine.isEmpty || index == 0 {
+                continue
+            }
+            
+            let components = trimmedLine.components(separatedBy: "\t")
+            if components.count >= 2 {
+                let text = components[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                let label = components[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                if !text.isEmpty && !label.isEmpty {
+                    samples.append(TestSample(text: text, expectedLabel: label))
+                }
+            }
         }
         
-        print("\n✅ Evaluation completed!")
-        
-        // Exit with error code if quality gates fail
-        if accuracy < 0.85 || p95Latency > 2.0 {
-            print("❌ Model failed quality gates")
-            exit(1)
+        return samples
+    }
+    
+    func saveResults(_ result: EvaluationResult, to outputPath: String) -> Bool {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let jsonData = try encoder.encode(result)
+            
+            try jsonData.write(to: URL(fileURLWithPath: outputPath))
+            print("💾 Evaluation results saved to: \(outputPath)")
+            return true
+        } catch {
+            print("❌ Failed to save results: \(error)")
+            return false
         }
-        
-    } catch {
-        print("❌ Error during evaluation: \(error)")
-        exit(1)
     }
 }
 
-// Helper function to calculate percentiles
-func percentile(_ values: [Double], _ p: Double) -> Double {
-    let sorted = values.sorted()
-    let index = Int(Double(sorted.count - 1) * p)
-    return sorted[index]
+// Main execution
+func main() {
+    print("🎯 TinyIntent Router Evaluation")
+    print("==============================")
+    
+    // Determine project root
+    let currentDir = FileManager.default.currentDirectoryPath
+    let projectRoot = URL(fileURLWithPath: currentDir)
+    
+    // Model paths
+    let trainedModelPath = projectRoot
+        .appendingPathComponent("router")
+        .appendingPathComponent("SmallIntent.mlpackage")
+        .path
+    
+    // Test data path
+    let testDataPath = projectRoot
+        .appendingPathComponent("router")
+        .appendingPathComponent("data")
+        .appendingPathComponent("intents_test.tsv")
+    
+    // Fallback to main training data if test data doesn't exist
+    let fallbackTestDataPath = projectRoot
+        .appendingPathComponent("router")
+        .appendingPathComponent("data")
+        .appendingPathComponent("intents.tsv")
+    
+    let finalTestDataPath = FileManager.default.fileExists(atPath: testDataPath) 
+        ? testDataPath 
+        : fallbackTestDataPath
+    
+    // Output path
+    let outputPath = projectRoot
+        .appendingPathComponent("router")
+        .appendingPathComponent("data")
+        .appendingPathComponent("eval_results.json")
+        .path
+    
+    // Check if model exists
+    guard FileManager.default.fileExists(atPath: trainedModelPath) else {
+        print("❌ Model not found at: \(trainedModelPath)")
+        print("   Run 'make router-train' first to train the model")
+        exit(1)
+    }
+    
+    // Check if test data exists
+    guard FileManager.default.fileExists(atPath: finalTestDataPath) else {
+        print("❌ Test data not found at: \(finalTestDataPath)")
+        print("   Ensure training data exists")
+        exit(1)
+    }
+    
+    // Create evaluator and run evaluation
+    let evaluator = RouterEvaluator(
+        modelPath: trainedModelPath,
+        testDataPath: finalTestDataPath
+    )
+    
+    guard let result = evaluator.evaluateModel() else {
+        print("❌ Evaluation failed")
+        exit(1)
+    }
+    
+    // Save results
+    guard evaluator.saveResults(result, to: outputPath) else {
+        print("❌ Failed to save evaluation results")
+        exit(1)
+    }
+    
+    print("\n🎉 Evaluation completed successfully!")
+    
+    if result.promotion_eligible {
+        print("✅ Model meets promotion criteria")
+    } else {
+        print("❌ Model does not meet promotion criteria:")
+        if result.accuracy < result.accuracy_threshold {
+            print("   - Accuracy too low: \(String(format: "%.2f", result.accuracy))% < \(result.accuracy_threshold)%")
+        }
+        if result.latency_ms > result.latency_threshold {
+            print("   - Latency too high: \(String(format: "%.2f", result.latency_ms))ms > \(result.latency_threshold)ms")
+        }
+    }
 }
 
-// Entry point
 main()

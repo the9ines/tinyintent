@@ -94,6 +94,13 @@ learn: ## Automated learning loop: export episodes → train → evaluate
 	@echo ""
 	@echo "$(GREEN)✅ Learning loop completed!$(NC)"
 
+promote: ## Promote evaluated model to active use if it meets criteria
+	@echo "$(GREEN)Promoting Router Model...$(NC)"
+	@echo "========================="
+	@test -f $(ROUTER_DIR)/data/eval_results.json || (echo "$(RED)Error: No evaluation results found. Run 'make router-eval' first.$(NC)" && exit 1)
+	@$(PYTHON) scripts/promote_model.py
+	@echo "$(GREEN)✅ Model promotion completed!$(NC)"
+
 export-episodes: ## Export episodes to training data
 	@echo "$(GREEN)Exporting episodes to training data...$(NC)"
 	@$(PYTHON) scripts/export_episodes.py
@@ -144,4 +151,4 @@ status: ## Show project status
 	@echo "Recent activity:"
 	@ls -la $(DATA_DIR)/episodes/ 2>/dev/null || echo "No episode data"
 
-.PHONY: help bridgesrv doctor router-train router-eval router-clean learn export-episodes export-summary clean-data backup-data lint format test clean status
+.PHONY: help bridgesrv doctor router-train router-eval router-clean learn promote export-episodes export-summary clean-data backup-data lint format test clean status
