@@ -36,6 +36,9 @@ from store import experience_store
 from approval import approval_manager
 from episodes import episode_logger
 
+# Import audit log integrity system (M6.2)
+from logs.rotate import initialize_audit_logger, get_audit_logger
+
 # Import helpers framework (with fallback for missing dependencies)
 import sys
 sys.path.append(str(Path(__file__).parent.parent / "helpers"))
@@ -56,6 +59,42 @@ app = FastAPI(title="TinyIntent Bridge", version="1.0.0")
 
 # Initialize model resolver
 model_resolver = ModelResolver()
+
+# Initialize audit log integrity system (M6.2)
+audit_log_path = Path(__file__).parent / "logs" / "audit.log"
+audit_logger = initialize_audit_logger(audit_log_path, max_size_mb=50)
+
+# Perform startup audit integrity check
+print("Performing audit log integrity check...")
+is_valid, integrity_errors = audit_logger.verify_integrity()
+if not is_valid:
+    print(f"WARNING: Audit log integrity check failed with {len(integrity_errors)} errors:")
+    for error in integrity_errors[:5]:  # Show first 5 errors
+        print(f"  - {error}")
+    if len(integrity_errors) > 5:
+        print(f"  ... and {len(integrity_errors) - 5} more errors")
+    
+    # Log integrity failure to new entry
+    from datetime import datetime
+    audit_logger.log_entry({
+        "ts": datetime.utcnow().isoformat() + 'Z',
+        "action": "startup_integrity_check",
+        "success": False,
+        "error_count": len(integrity_errors),
+        "errors": integrity_errors[:10],  # Log first 10 errors
+        "warning": "Audit log integrity compromised"
+    })
+else:
+    print("✓ Audit log integrity check passed")
+    # Log successful integrity check
+    from datetime import datetime
+    audit_logger.log_entry({
+        "ts": datetime.utcnow().isoformat() + 'Z',
+        "action": "startup_integrity_check", 
+        "success": True,
+        "error_count": 0,
+        "message": "Audit log integrity verified"
+    })
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -928,6 +967,69 @@ async def reload_helpers(auth: bool = Depends(verify_auth)) -> Dict[str, str]:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to reload helpers: {str(e)}"
+        )
+
+
+@app.get("/admin/audit-log-stats")
+async def get_audit_log_stats(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """Get audit log statistics and integrity status. M6.2"""
+    try:
+        stats = audit_logger.get_stats()
+        
+        # Add integrity check
+        is_valid, errors = audit_logger.verify_integrity()
+        stats["integrity_valid"] = is_valid
+        stats["integrity_error_count"] = len(errors)
+        
+        if not is_valid:
+            stats["integrity_errors"] = errors[:5]  # First 5 errors
+        
+        return stats
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get audit log stats: {str(e)}"
+        )
+
+
+@app.post("/admin/rotate-audit-log")
+async def rotate_audit_log(auth: bool = Depends(verify_auth)) -> Dict[str, str]:
+    """Force audit log rotation. M6.2"""
+    try:
+        rotated = audit_logger.rotate_now()
+        if rotated:
+            return {"status": "success", "message": "Audit log rotated successfully"}
+        else:
+            return {"status": "success", "message": "No rotation needed (log file empty or missing)"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to rotate audit log: {str(e)}"
+        )
+
+
+@app.get("/admin/verify-audit-integrity")
+async def verify_audit_integrity(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """Verify audit log integrity for current and archived logs. M6.2"""
+    try:
+        is_valid, errors = audit_logger.verify_all_integrity()
+        
+        result = {
+            "integrity_valid": is_valid,
+            "error_count": len(errors),
+            "message": "All audit logs verified" if is_valid else "Integrity violations found"
+        }
+        
+        if not is_valid:
+            result["errors"] = errors[:10]  # First 10 errors
+            if len(errors) > 10:
+                result["additional_errors"] = len(errors) - 10
+        
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to verify audit integrity: {str(e)}"
         )
 
 
