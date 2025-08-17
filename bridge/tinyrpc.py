@@ -327,12 +327,31 @@ async def readiness_check() -> Dict[str, Any]:
 @app.post("/route")
 async def route_request(
     request: RouteRequest, 
-    auth: bool = Depends(verify_auth),
-    idempotency_key_header: Optional[str] = None
+    fastapi_request: Request,
+    auth: bool = Depends(verify_auth)
 ) -> RouteResponse:
-    """Route a request to generation or action with full event logging."""
+    """
+    Route a request to generation or action with full event logging.
     
-    # Get idempotency key from request body or header
+    Example usage:
+    
+    # Preview request
+    curl -X POST "http://localhost:8787/route" \
+      -H "Content-Type: application/json" \
+      -H "X-TinyIntent-Secret: your_secret" \
+      -d '{"text": "Show my positions", "route": "act", "helper_id": "bot_guard"}'
+    
+    # Execute with approval token and idempotency
+    curl -X POST "http://localhost:8787/route" \
+      -H "Content-Type: application/json" \
+      -H "X-TinyIntent-Secret: your_secret" \
+      -H "X-Idempotency-Key: unique-key-123" \
+      -d '{"text": "Show my positions", "route": "act", "helper_id": "bot_guard", 
+           "execute": true, "approval_token": "abc123..."}'
+    """
+    
+    # Get idempotency key from header or request body (prefer body)
+    idempotency_key_header = fastapi_request.headers.get("X-Idempotency-Key")
     idempotency_key = request.idempotency_key or idempotency_key_header
     
     # Get or create session ID
@@ -525,9 +544,22 @@ async def route_request(
                         success=False,
                         error_code="APPROVAL_FAILED"
                     )
+                    
+                    # Determine reason code for better error reporting
+                    reason_code = "TOKEN_INVALID"
+                    if "already used" in error_msg:
+                        reason_code = "TOKEN_USED"
+                    elif "expired" in error_msg:
+                        reason_code = "TOKEN_EXPIRED"
+                    elif "too old" in error_msg:
+                        reason_code = "TOKEN_TOO_OLD"
+                    elif "does not match" in error_msg:
+                        reason_code = "TOKEN_MISMATCH"
+                    
                     raise HTTPException(
                         status_code=403,
-                        detail=error_msg
+                        detail=error_msg,
+                        headers={"reason_code": reason_code}
                     )
                 
                 # Execute helper
