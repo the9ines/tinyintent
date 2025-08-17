@@ -7,7 +7,9 @@ Manages the lifecycle of sandboxed helpers for action execution.
 
 import json
 import os
+import signal
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -15,6 +17,13 @@ from typing import Dict, Any, List, Optional, Union
 import yaml
 import jsonschema
 from datetime import datetime
+
+# Import resource limits (graceful fallback for non-Unix systems)
+try:
+    import resource
+    RESOURCE_LIMITS_AVAILABLE = True
+except ImportError:
+    RESOURCE_LIMITS_AVAILABLE = False
 
 # Load environment variables from .env file if it exists
 def load_env_file():
@@ -32,6 +41,219 @@ def load_env_file():
 
 # Load .env file on module import
 load_env_file()
+
+
+class SandboxViolationError(Exception):
+    """Exception raised when helper execution violates sandbox limits."""
+    
+    def __init__(self, message: str, error_code: str, details: Dict[str, Any] = None):
+        super().__init__(message)
+        self.error_code = error_code
+        self.details = details or {}
+
+
+class HelperSandbox:
+    """Enhanced sandbox for helper execution with resource limits."""
+    
+    def __init__(self, helper_id: str, audit_log_path: Path):
+        self.helper_id = helper_id
+        self.audit_log_path = audit_log_path
+        
+        # Default sandbox limits
+        self.max_cpu_time = 10  # seconds
+        self.max_memory_mb = 256  # MB
+        self.max_execution_time = 15  # seconds (wall clock time)
+        self.max_output_size = 1024 * 1024  # 1MB
+        
+    def set_limits(self, cpu_time: int = None, memory_mb: int = None, 
+                   execution_time: int = None, output_size: int = None):
+        """Set sandbox resource limits."""
+        if cpu_time is not None:
+            self.max_cpu_time = cpu_time
+        if memory_mb is not None:
+            self.max_memory_mb = memory_mb
+        if execution_time is not None:
+            self.max_execution_time = execution_time
+        if output_size is not None:
+            self.max_output_size = output_size
+    
+    def _create_preexec_fn(self):
+        """Create preexec function to set resource limits on child process."""
+        if not RESOURCE_LIMITS_AVAILABLE:
+            return None
+            
+        def preexec():
+            try:
+                # Set CPU time limit
+                resource.setrlimit(resource.RLIMIT_CPU, (self.max_cpu_time, self.max_cpu_time))
+                
+                # Set memory limit (virtual memory)
+                max_memory_bytes = self.max_memory_mb * 1024 * 1024
+                try:
+                    resource.setrlimit(resource.RLIMIT_AS, (max_memory_bytes, max_memory_bytes))
+                except (OSError, ValueError):
+                    # Some systems don't support RLIMIT_AS or have different behavior
+                    try:
+                        # Try RSS limit instead
+                        resource.setrlimit(resource.RLIMIT_RSS, (max_memory_bytes, max_memory_bytes))
+                    except (OSError, ValueError):
+                        # If neither works, just log and continue
+                        pass
+                
+                # Set file size limit to prevent large outputs
+                resource.setrlimit(resource.RLIMIT_FSIZE, (self.max_output_size, self.max_output_size))
+                
+                # Set process priority to lower value (nice)
+                try:
+                    os.nice(5)  # Lower priority
+                except OSError:
+                    pass  # Not critical if this fails
+                    
+            except Exception:
+                # Don't fail the entire execution if limits can't be set
+                # This ensures compatibility across different systems
+                pass
+        
+        return preexec
+    
+    def execute(self, cmd: List[str], input_data: str, env: Dict[str, str], 
+                cwd: Path) -> Dict[str, Any]:
+        """
+        Execute command in sandboxed environment with resource limits.
+        
+        Returns:
+            dict: Execution result or structured error
+        """
+        preexec_fn = self._create_preexec_fn()
+        process = None
+        
+        try:
+            # Start the process
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                cwd=cwd,
+                preexec_fn=preexec_fn
+            )
+            
+            # Set wall clock timeout
+            try:
+                stdout, stderr = process.communicate(
+                    input=input_data, 
+                    timeout=self.max_execution_time
+                )
+            except subprocess.TimeoutExpired:
+                # Kill the process
+                process.kill()
+                try:
+                    stdout, stderr = process.communicate(timeout=1)
+                except subprocess.TimeoutExpired:
+                    # Force kill if needed
+                    process.terminate()
+                    stdout, stderr = "", "Process forcibly terminated"
+                
+                error_details = {
+                    "timeout_seconds": self.max_execution_time,
+                    "helper_id": self.helper_id
+                }
+                self._log_sandbox_violation("TIMEOUT", f"Helper execution exceeded {self.max_execution_time}s timeout", error_details)
+                
+                raise SandboxViolationError(
+                    f"Helper execution timed out after {self.max_execution_time}s",
+                    "SANDBOX_TIMEOUT",
+                    error_details
+                )
+            
+            # Check exit code for resource limit violations
+            if process.returncode != 0:
+                # Check for specific resource limit signals
+                if process.returncode == -signal.SIGXCPU:
+                    # CPU time limit exceeded
+                    error_details = {
+                        "cpu_limit_seconds": self.max_cpu_time,
+                        "helper_id": self.helper_id,
+                        "stderr": stderr
+                    }
+                    self._log_sandbox_violation("CPU_LIMIT", f"Helper exceeded CPU time limit of {self.max_cpu_time}s", error_details)
+                    
+                    raise SandboxViolationError(
+                        f"Helper exceeded CPU time limit of {self.max_cpu_time}s",
+                        "SANDBOX_CPU_LIMIT",
+                        error_details
+                    )
+                
+                elif process.returncode == -signal.SIGKILL or "killed" in stderr.lower():
+                    # Likely memory limit exceeded (OOM killer)
+                    error_details = {
+                        "memory_limit_mb": self.max_memory_mb,
+                        "helper_id": self.helper_id,
+                        "stderr": stderr
+                    }
+                    self._log_sandbox_violation("MEMORY_LIMIT", f"Helper likely exceeded memory limit of {self.max_memory_mb}MB", error_details)
+                    
+                    raise SandboxViolationError(
+                        f"Helper exceeded memory limit of {self.max_memory_mb}MB",
+                        "SANDBOX_MEMORY_LIMIT", 
+                        error_details
+                    )
+                
+                # Regular execution failure
+                raise RuntimeError(f"Helper execution failed: {stderr}")
+            
+            # Check output size
+            if len(stdout) > self.max_output_size:
+                error_details = {
+                    "output_size": len(stdout),
+                    "max_output_size": self.max_output_size,
+                    "helper_id": self.helper_id
+                }
+                self._log_sandbox_violation("OUTPUT_SIZE", f"Helper output exceeded limit of {self.max_output_size} bytes", error_details)
+                
+                raise SandboxViolationError(
+                    f"Helper output exceeded size limit of {self.max_output_size} bytes",
+                    "SANDBOX_OUTPUT_SIZE",
+                    error_details
+                )
+            
+            # Parse and return result
+            try:
+                return json.loads(stdout)
+            except json.JSONDecodeError:
+                raise ValueError(f"Helper returned invalid JSON: {stdout}")
+                
+        except SandboxViolationError:
+            # Re-raise sandbox violations as-is
+            raise
+        except Exception as e:
+            # Handle other execution errors
+            if process and process.poll() is None:
+                process.kill()
+            raise e
+    
+    def _log_sandbox_violation(self, violation_type: str, message: str, details: Dict[str, Any]):
+        """Log sandbox violation to audit log."""
+        timestamp = datetime.utcnow().isoformat() + 'Z'
+        
+        audit_entry = {
+            "ts": timestamp,
+            "action": "sandbox_violation",
+            "violation_type": violation_type,
+            "helper_id": self.helper_id,
+            "message": message,
+            "details": details,
+            "success": False
+        }
+        
+        try:
+            with open(self.audit_log_path, 'a') as f:
+                f.write(json.dumps(audit_entry) + '\n')
+        except Exception:
+            # Don't fail the entire operation if audit logging fails
+            pass
 
 
 class HelperManifest:
@@ -474,7 +696,7 @@ class HelperExecutor:
     
     def _execute_helper(self, helper: HelperManifest, input_data: Dict[str, Any], 
                        mode: str = "preview") -> Dict[str, Any]:
-        """Execute helper subprocess with sandbox constraints."""
+        """Execute helper subprocess with enhanced sandbox constraints."""
         
         # Prepare environment
         env = os.environ.copy()
@@ -516,32 +738,65 @@ class HelperExecutor:
         # Prepare input JSON
         input_json = json.dumps(input_data)
         
-        # Get timeout
+        # Create enhanced sandbox
+        sandbox = HelperSandbox(helper.helper_id, self.audit_log)
+        
+        # Configure sandbox limits from helper manifest and mode
         timeout = helper.get_timeout(mode)
+        cpu_limit = helper.sandbox.get("cpu", {}).get("max_ms", 10000) // 1000  # Convert ms to seconds
+        memory_limit = helper.sandbox.get("mem", {}).get("max_mb", 256)
+        
+        # Apply stricter limits for execute mode
+        if mode == "execute":
+            # Execute mode gets slightly more time but same resource limits
+            sandbox.set_limits(
+                cpu_time=max(cpu_limit, 15),  # At least 15s for execute
+                memory_mb=memory_limit,
+                execution_time=max(timeout, 20),  # Wall clock time
+                output_size=1024 * 1024  # 1MB max output
+            )
+        else:
+            # Preview mode gets default limits
+            sandbox.set_limits(
+                cpu_time=cpu_limit,
+                memory_mb=memory_limit,
+                execution_time=timeout,
+                output_size=512 * 1024  # 512KB max output for preview
+            )
         
         try:
-            # Execute subprocess with constraints
-            result = subprocess.run(
-                cmd,
-                input=input_json,
-                text=True,
-                capture_output=True,
-                timeout=timeout,
-                cwd=helper.helper_dir,
-                env=env
+            # Execute in sandbox
+            return sandbox.execute(cmd, input_json, env, helper.helper_dir)
+            
+        except SandboxViolationError as e:
+            # Convert sandbox violations to structured errors
+            self._log_audit(
+                "sandbox_violation", 
+                helper.helper_id, 
+                input_data, 
+                error=f"{e.error_code}: {str(e)}"
             )
             
-            if result.returncode != 0:
-                raise RuntimeError(f"Helper execution failed: {result.stderr}")
+            # Create structured error response
+            error_response = {
+                "error": "sandbox_violation",
+                "error_code": e.error_code,
+                "message": str(e),
+                "details": e.details
+            }
             
-            # Parse output
-            try:
-                return json.loads(result.stdout)
-            except json.JSONDecodeError:
-                raise ValueError(f"Helper returned invalid JSON: {result.stdout}")
-        
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Helper execution timed out after {timeout}s")
+            # Re-raise as RuntimeError with structured info for HTTP 500
+            raise RuntimeError(f"Sandbox violation: {e.error_code} - {str(e)}")
+            
+        except Exception as e:
+            # Handle other execution errors
+            self._log_audit(
+                "execution_error",
+                helper.helper_id,
+                input_data,
+                error=str(e)
+            )
+            raise
     
     def _generate_approval_token(self) -> str:
         """Generate approval token for two-step execution."""

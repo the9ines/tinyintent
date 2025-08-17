@@ -34,6 +34,7 @@ load_env_file()
 from resolve import ModelResolver
 from store import experience_store
 from approval import approval_manager
+from episodes import episode_logger
 
 # Import helpers framework (with fallback for missing dependencies)
 import sys
@@ -589,6 +590,35 @@ async def route_request(
                     else:
                         raise
                 
+                except RuntimeError as e:
+                    # Check for sandbox violations
+                    if "Sandbox violation:" in str(e):
+                        # Extract error code from sandbox violation
+                        error_msg = str(e)
+                        if "SANDBOX_TIMEOUT" in error_msg:
+                            error_code = "SANDBOX_TIMEOUT"
+                        elif "SANDBOX_CPU_LIMIT" in error_msg:
+                            error_code = "SANDBOX_CPU_LIMIT"
+                        elif "SANDBOX_MEMORY_LIMIT" in error_msg:
+                            error_code = "SANDBOX_MEMORY_LIMIT"
+                        elif "SANDBOX_OUTPUT_SIZE" in error_msg:
+                            error_code = "SANDBOX_OUTPUT_SIZE"
+                        else:
+                            error_code = "SANDBOX_VIOLATION"
+                        
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Helper execution failed due to sandbox limits",
+                            headers={"error_code": error_code}
+                        )
+                    else:
+                        # Regular runtime error
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Helper execution failed: {str(e)}",
+                            headers={"error_code": "EXECUTION_FAILED"}
+                        )
+                
                 # Cache result for idempotency if key provided
                 if idempotency_key:
                     cache_result = {
@@ -605,11 +635,40 @@ async def route_request(
                 
             else:
                 # Execute helper in preview mode
-                helper_result = helper_executor.preview(
-                    helper_id=helper_id,
-                    input_data=helper_input,
-                    session_id=session_id
-                )
+                try:
+                    helper_result = helper_executor.preview(
+                        helper_id=helper_id,
+                        input_data=helper_input,
+                        session_id=session_id
+                    )
+                except RuntimeError as e:
+                    # Check for sandbox violations in preview mode
+                    if "Sandbox violation:" in str(e):
+                        # Extract error code from sandbox violation
+                        error_msg = str(e)
+                        if "SANDBOX_TIMEOUT" in error_msg:
+                            error_code = "SANDBOX_TIMEOUT"
+                        elif "SANDBOX_CPU_LIMIT" in error_msg:
+                            error_code = "SANDBOX_CPU_LIMIT"
+                        elif "SANDBOX_MEMORY_LIMIT" in error_msg:
+                            error_code = "SANDBOX_MEMORY_LIMIT"
+                        elif "SANDBOX_OUTPUT_SIZE" in error_msg:
+                            error_code = "SANDBOX_OUTPUT_SIZE"
+                        else:
+                            error_code = "SANDBOX_VIOLATION"
+                        
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Helper preview failed due to sandbox limits",
+                            headers={"error_code": error_code}
+                        )
+                    else:
+                        # Regular runtime error
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Helper preview failed: {str(e)}",
+                            headers={"error_code": "PREVIEW_FAILED"}
+                        )
             
             # Apply reflection layer validation
             reflection_enabled = os.getenv("REFLECTION_ENABLED", "1") == "1"
@@ -666,6 +725,29 @@ async def route_request(
                 success=True
             )
             
+            # Log episode for router retraining
+            final_status = helper_result.get("status", "success")
+            episode_success = final_status == "success"
+            episode_error_code = None
+            
+            if not episode_success:
+                if helper_result.get("veto_reason"):
+                    episode_error_code = "REFLECTION_VETO"
+                elif helper_result.get("reflection_error"):
+                    episode_error_code = "REFLECTION_ERROR"
+            
+            episode_logger.log_episode(
+                session_id=session_id,
+                action=execution_mode,
+                helper_id=helper_id,
+                input_data=helper_input,
+                status_code=200,  # HTTP status for successful response
+                success=episode_success,
+                approval_token_id=token_id if request.execute else None,
+                idempotency_key=idempotency_key,
+                error_code=episode_error_code
+            )
+            
             # Build response based on execution mode
             if request.execute:
                 return RouteResponse(
@@ -695,7 +777,30 @@ async def route_request(
                     reflection_error=helper_result.get("reflection_error")
                 )
             
-        except HTTPException:
+        except HTTPException as e:
+            # Log failed episode for HTTP exceptions
+            error_code = None
+            if e.status_code == 403:
+                error_code = "APPROVAL_FAILED"
+            elif e.status_code == 409:
+                error_code = "MISSING_ENVIRONMENT"
+            elif e.status_code == 500:
+                error_code = "SCHEMA_VALIDATION_FAILED"
+            elif e.status_code == 503:
+                error_code = "EXECUTION_DISABLED"
+            
+            episode_logger.log_episode(
+                session_id=session_id,
+                action=execution_mode,
+                helper_id=helper_id if 'helper_id' in locals() else "unknown",
+                input_data=helper_input if 'helper_input' in locals() else {},
+                status_code=e.status_code,
+                success=False,
+                approval_token_id=token_id if 'token_id' in locals() else None,
+                idempotency_key=idempotency_key,
+                error_code=error_code
+            )
+            
             raise  # Re-raise HTTP exceptions
             
         except Exception as e:
@@ -707,6 +812,20 @@ async def route_request(
                 success=False,
                 error_code="HELPER_ERROR"
             )
+            
+            # Log failed episode for unexpected errors
+            episode_logger.log_episode(
+                session_id=session_id,
+                action=execution_mode if 'execution_mode' in locals() else "unknown",
+                helper_id=helper_id if 'helper_id' in locals() else "unknown",
+                input_data=helper_input if 'helper_input' in locals() else {},
+                status_code=500,
+                success=False,
+                approval_token_id=None,
+                idempotency_key=idempotency_key,
+                error_code="HELPER_ERROR"
+            )
+            
             raise HTTPException(
                 status_code=500,
                 detail=f"Helper execution failed: {str(e)}"
