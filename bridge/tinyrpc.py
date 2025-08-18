@@ -51,7 +51,7 @@ from logs.rotate import initialize_audit_logger, get_audit_logger
 import sys
 sys.path.append(str(Path(__file__).parent.parent / "helpers"))
 try:
-    from sdk import helper_registry, helper_executor, CapabilityViolationError
+    from sdk import helper_registry, helper_executor, CapabilityViolationError, HelperRateLimitError
     from reflector import reflector
     HELPERS_AVAILABLE = True
 except ImportError as e:
@@ -61,6 +61,7 @@ except ImportError as e:
     helper_executor = None
     reflector = None
     CapabilityViolationError = None
+    HelperRateLimitError = None
 
 
 # Initialize FastAPI app
@@ -200,6 +201,140 @@ class EmergencyKillSwitch:
 
 # Initialize emergency kill switch
 emergency_kill = EmergencyKillSwitch(emergency_flag_path)
+
+# Rate Limiting System (M6.6)
+class RateLimiter:
+    """Manages rate limiting for sessions and global requests."""
+    
+    def __init__(self, 
+                 session_limit: int = 60,  # requests per minute per session
+                 global_limit: int = 500,  # requests per minute globally
+                 window_seconds: int = 60):  # rolling window size
+        self.session_limit = session_limit
+        self.global_limit = global_limit
+        self.window_seconds = window_seconds
+        
+        # Thread-safe access to counters
+        self.lock = threading.Lock()
+        
+        # Session-based request tracking: {session_id: [(timestamp, request_count), ...]}
+        self.session_requests: Dict[str, List[tuple]] = {}
+        
+        # Global request tracking: [(timestamp, request_count), ...]
+        self.global_requests: List[tuple] = []
+        
+        # Cleanup thread for expired entries
+        self.cleanup_thread = threading.Thread(target=self._cleanup_expired, daemon=True)
+        self.cleanup_thread.start()
+    
+    def _cleanup_expired(self):
+        """Background thread to clean up expired rate limit entries."""
+        while True:
+            try:
+                current_time = time.time()
+                cutoff_time = current_time - self.window_seconds
+                
+                with self.lock:
+                    # Clean up session requests
+                    for session_id in list(self.session_requests.keys()):
+                        self.session_requests[session_id] = [
+                            entry for entry in self.session_requests[session_id]
+                            if entry[0] > cutoff_time
+                        ]
+                        # Remove empty sessions
+                        if not self.session_requests[session_id]:
+                            del self.session_requests[session_id]
+                    
+                    # Clean up global requests
+                    self.global_requests = [
+                        entry for entry in self.global_requests
+                        if entry[0] > cutoff_time
+                    ]
+                
+                # Sleep for cleanup interval (10 seconds)
+                time.sleep(10)
+                
+            except Exception as e:
+                print(f"Warning: Rate limiter cleanup error: {e}")
+                time.sleep(10)
+    
+    def check_rate_limit(self, session_id: str) -> tuple[bool, Optional[int]]:
+        """
+        Check if request should be rate limited.
+        
+        Returns:
+            (allowed: bool, retry_after_seconds: Optional[int])
+        """
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+        
+        with self.lock:
+            # Count session requests in current window
+            if session_id not in self.session_requests:
+                self.session_requests[session_id] = []
+            
+            session_count = sum(
+                count for timestamp, count in self.session_requests[session_id]
+                if timestamp > cutoff_time
+            )
+            
+            # Count global requests in current window
+            global_count = sum(
+                count for timestamp, count in self.global_requests
+                if timestamp > cutoff_time
+            )
+            
+            # Check session limit
+            if session_count >= self.session_limit:
+                return False, self.window_seconds
+            
+            # Check global limit
+            if global_count >= self.global_limit:
+                return False, self.window_seconds
+            
+            # Add this request to counters
+            self.session_requests[session_id].append((current_time, 1))
+            self.global_requests.append((current_time, 1))
+            
+            return True, None
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current rate limiting statistics."""
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+        
+        with self.lock:
+            # Count current session requests
+            session_stats = {}
+            for session_id, requests in self.session_requests.items():
+                count = sum(
+                    count for timestamp, count in requests
+                    if timestamp > cutoff_time
+                )
+                if count > 0:
+                    session_stats[session_id] = count
+            
+            # Count current global requests
+            global_count = sum(
+                count for timestamp, count in self.global_requests
+                if timestamp > cutoff_time
+            )
+            
+            return {
+                "session_limit": self.session_limit,
+                "global_limit": self.global_limit,
+                "window_seconds": self.window_seconds,
+                "current_global_count": global_count,
+                "active_sessions": len(session_stats),
+                "session_counts": session_stats
+            }
+
+# Initialize rate limiter
+rate_limiter = RateLimiter(
+    session_limit=int(os.getenv("RATE_LIMIT_SESSION", "60")),
+    global_limit=int(os.getenv("RATE_LIMIT_GLOBAL", "500")),
+    window_seconds=int(os.getenv("RATE_LIMIT_WINDOW", "60"))
+)
 
 # Perform startup audit integrity check
 print("Performing audit log integrity check...")
@@ -541,6 +676,44 @@ async def route_request(
     # Update session activity
     experience_store.update_session_activity(session_id)
     
+    # Rate limiting check (M6.6)
+    allowed, retry_after = rate_limiter.check_rate_limit(session_id)
+    if not allowed:
+        # Log rate limit violation
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "rate_limit",
+            "session_id": session_id,
+            "success": False,
+            "client_ip": fastapi_request.client.host if fastapi_request.client else "unknown",
+            "user_agent": fastapi_request.headers.get("User-Agent", "unknown"),
+            "route": request.route,
+            "text_length": len(request.text) if request.text else 0,
+            "retry_after": retry_after
+        })
+        
+        # Log failed episode for rate limiting
+        episode_logger.log_episode(
+            session_id=session_id,
+            action="rate_limited",
+            helper_id="N/A",
+            input_data={"route": request.route, "text_length": len(request.text) if request.text else 0},
+            status_code=429,
+            success=False,
+            error_code="RATE_LIMIT_EXCEEDED"
+        )
+        
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={
+                "Retry-After": str(retry_after),
+                "X-RateLimit-Limit-Session": str(rate_limiter.session_limit),
+                "X-RateLimit-Limit-Global": str(rate_limiter.global_limit),
+                "X-RateLimit-Window": str(rate_limiter.window_seconds)
+            }
+        )
+    
     # Determine which model to use
     model_to_use = None
     if request.llm_model:
@@ -774,22 +947,22 @@ async def route_request(
                     else:
                         raise
                 
-                except Exception as capability_error:
+                except Exception as execution_error:
                     # Check for capability violations (M6.5)
                     if (CapabilityViolationError and 
-                        isinstance(capability_error, CapabilityViolationError)):
+                        isinstance(execution_error, CapabilityViolationError)):
                         
                         # Log capability violation for audit
                         audit_logger.log_entry({
                             "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
                             "action": "capability_violation",
                             "helper_id": helper_id,
-                            "capability": capability_error.capability,
-                            "operation": capability_error.operation,
+                            "capability": execution_error.capability,
+                            "operation": execution_error.operation,
                             "session_id": session_id,
                             "success": False,
-                            "error_code": capability_error.error_code,
-                            "details": capability_error.details
+                            "error_code": execution_error.error_code,
+                            "details": execution_error.details
                         })
                         
                         # Log episode with capability violation
@@ -806,16 +979,59 @@ async def route_request(
                         # Return HTTP 403 with capability violation details
                         raise HTTPException(
                             status_code=403,
-                            detail=f"Helper capability violation: {str(capability_error)}",
+                            detail=f"Helper capability violation: {str(execution_error)}",
                             headers={
                                 "reason": "CAPABILITY_VIOLATION",
-                                "capability": capability_error.capability,
-                                "operation": capability_error.operation
+                                "capability": execution_error.capability,
+                                "operation": execution_error.operation
                             }
                         )
+                    
+                    # Check for helper rate limit violations (M6.6)
+                    elif (HelperRateLimitError and 
+                          isinstance(execution_error, HelperRateLimitError)):
+                        
+                        # Log helper rate limit violation for audit
+                        audit_logger.log_entry({
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                            "action": "helper_rate_limit",
+                            "helper_id": helper_id,
+                            "session_id": session_id,
+                            "success": False,
+                            "error_code": execution_error.error_code,
+                            "current_count": execution_error.current_count,
+                            "limit": execution_error.limit,
+                            "window_seconds": execution_error.window_seconds
+                        })
+                        
+                        # Log episode with rate limit violation
+                        episode_logger.log_episode(
+                            session_id=session_id,
+                            action="execute",
+                            helper_id=helper_id,
+                            input_data=helper_input,
+                            status_code=429,
+                            success=False,
+                            error_code="HELPER_RATE_LIMIT"
+                        )
+                        
+                        # Return HTTP 429 with rate limit details
+                        raise HTTPException(
+                            status_code=429,
+                            detail=f"Helper rate limit exceeded: {str(execution_error)}",
+                            headers={
+                                "reason": "HELPER_RATE_LIMIT",
+                                "Retry-After": str(execution_error.window_seconds),
+                                "X-RateLimit-Helper": helper_id,
+                                "X-RateLimit-Limit": str(execution_error.limit),
+                                "X-RateLimit-Current": str(execution_error.current_count),
+                                "X-RateLimit-Window": str(execution_error.window_seconds)
+                            }
+                        )
+                    
                     else:
-                        # Re-raise non-capability exceptions
-                        raise capability_error
+                        # Re-raise other exceptions
+                        raise execution_error
                 
                 except RuntimeError as e:
                     # Check for sandbox violations
@@ -868,22 +1084,22 @@ async def route_request(
                         input_data=helper_input,
                         session_id=session_id
                     )
-                except Exception as capability_error:
+                except Exception as preview_error:
                     # Check for capability violations in preview mode (M6.5)
                     if (CapabilityViolationError and 
-                        isinstance(capability_error, CapabilityViolationError)):
+                        isinstance(preview_error, CapabilityViolationError)):
                         
                         # Log capability violation for audit
                         audit_logger.log_entry({
                             "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
                             "action": "capability_violation",
                             "helper_id": helper_id,
-                            "capability": capability_error.capability,
-                            "operation": capability_error.operation,
+                            "capability": preview_error.capability,
+                            "operation": preview_error.operation,
                             "session_id": session_id,
                             "success": False,
-                            "error_code": capability_error.error_code,
-                            "details": capability_error.details
+                            "error_code": preview_error.error_code,
+                            "details": preview_error.details
                         })
                         
                         # Log episode with capability violation
@@ -900,13 +1116,15 @@ async def route_request(
                         # Return HTTP 403 with capability violation details
                         raise HTTPException(
                             status_code=403,
-                            detail=f"Helper capability violation: {str(capability_error)}",
+                            detail=f"Helper capability violation: {str(preview_error)}",
                             headers={
                                 "reason": "CAPABILITY_VIOLATION",
-                                "capability": capability_error.capability,
-                                "operation": capability_error.operation
+                                "capability": preview_error.capability,
+                                "operation": preview_error.operation
                             }
                         )
+                    
+                    # Note: Preview mode doesn't check helper rate limits as it's non-destructive
                 
                 except RuntimeError as e:
                     # Check for sandbox violations in preview mode
@@ -1057,6 +1275,13 @@ async def route_request(
                     error_code = "APPROVAL_FAILED"
             elif e.status_code == 409:
                 error_code = "MISSING_ENVIRONMENT"
+            elif e.status_code == 429:
+                # Check if it's helper rate limit or general rate limit
+                reason_header = e.headers.get("reason") if hasattr(e, 'headers') else None
+                if reason_header == "HELPER_RATE_LIMIT":
+                    error_code = "HELPER_RATE_LIMIT"
+                else:
+                    error_code = "RATE_LIMIT_EXCEEDED"
             elif e.status_code == 500:
                 error_code = "SCHEMA_VALIDATION_FAILED"
             elif e.status_code == 503:
@@ -1267,6 +1492,23 @@ async def verify_audit_integrity(auth: bool = Depends(verify_auth)) -> Dict[str,
         raise HTTPException(
             status_code=500,
             detail=f"Failed to verify audit integrity: {str(e)}"
+        )
+
+
+@app.get("/admin/rate-limit-stats")
+async def get_rate_limit_stats(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """Get current rate limiting statistics. M6.6"""
+    try:
+        stats = rate_limiter.get_stats()
+        return {
+            "status": "success",
+            "rate_limits": stats,
+            "message": f"Rate limiting active with {stats['active_sessions']} sessions tracked"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get rate limit stats: {str(e)}"
         )
 
 

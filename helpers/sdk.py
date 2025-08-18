@@ -131,6 +131,146 @@ class CapabilityViolationError(Exception):
         self.details = details or {}
 
 
+class HelperRateLimitError(Exception):
+    """Exception raised when helper execution rate limit is exceeded."""
+    
+    def __init__(self, message: str, helper_id: str, current_count: int, limit: int, window_seconds: int):
+        super().__init__(message)
+        self.error_code = "HELPER_RATE_LIMIT"
+        self.helper_id = helper_id
+        self.current_count = current_count
+        self.limit = limit
+        self.window_seconds = window_seconds
+
+
+class HelperRateLimiter:
+    """Manages rate limiting for helper executions."""
+    
+    def __init__(self, default_limit: int = 10, window_seconds: int = 60):
+        self.default_limit = default_limit
+        self.window_seconds = window_seconds
+        
+        # Thread-safe access to counters
+        import threading
+        self.lock = threading.Lock()
+        
+        # Helper execution tracking: {helper_id: [(timestamp, count), ...]}
+        self.helper_executions: Dict[str, List[tuple]] = {}
+    
+    def check_helper_rate_limit(self, helper_id: str, limit: Optional[int] = None) -> bool:
+        """
+        Check if helper execution should be rate limited.
+        
+        Args:
+            helper_id: ID of the helper
+            limit: Custom limit for this helper (uses default if None)
+            
+        Returns:
+            bool: True if execution is allowed, False if rate limited
+        """
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+        effective_limit = limit if limit is not None else self.default_limit
+        
+        with self.lock:
+            # Initialize tracking for helper if not exists
+            if helper_id not in self.helper_executions:
+                self.helper_executions[helper_id] = []
+            
+            # Clean up expired entries for this helper
+            self.helper_executions[helper_id] = [
+                entry for entry in self.helper_executions[helper_id]
+                if entry[0] > cutoff_time
+            ]
+            
+            # Count current executions in window
+            current_count = sum(
+                count for timestamp, count in self.helper_executions[helper_id]
+                if timestamp > cutoff_time
+            )
+            
+            # Check if limit exceeded
+            if current_count >= effective_limit:
+                raise HelperRateLimitError(
+                    f"Helper {helper_id} rate limit exceeded: {current_count}/{effective_limit} executions in {self.window_seconds}s",
+                    helper_id=helper_id,
+                    current_count=current_count,
+                    limit=effective_limit,
+                    window_seconds=self.window_seconds
+                )
+            
+            # Add this execution to tracking
+            self.helper_executions[helper_id].append((current_time, 1))
+            
+            return True
+    
+    def get_helper_stats(self, helper_id: str) -> Dict[str, Any]:
+        """Get current rate limiting stats for a specific helper."""
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+        
+        with self.lock:
+            if helper_id not in self.helper_executions:
+                return {
+                    "helper_id": helper_id,
+                    "current_count": 0,
+                    "limit": self.default_limit,
+                    "window_seconds": self.window_seconds,
+                    "remaining": self.default_limit
+                }
+            
+            # Count current executions
+            current_count = sum(
+                count for timestamp, count in self.helper_executions[helper_id]
+                if timestamp > cutoff_time
+            )
+            
+            return {
+                "helper_id": helper_id,
+                "current_count": current_count,
+                "limit": self.default_limit,
+                "window_seconds": self.window_seconds,
+                "remaining": max(0, self.default_limit - current_count)
+            }
+    
+    def get_all_stats(self) -> Dict[str, Any]:
+        """Get rate limiting stats for all helpers."""
+        current_time = time.time()
+        cutoff_time = current_time - self.window_seconds
+        
+        with self.lock:
+            helper_stats = {}
+            total_executions = 0
+            
+            for helper_id in self.helper_executions:
+                current_count = sum(
+                    count for timestamp, count in self.helper_executions[helper_id]
+                    if timestamp > cutoff_time
+                )
+                if current_count > 0:
+                    helper_stats[helper_id] = {
+                        "current_count": current_count,
+                        "limit": self.default_limit,
+                        "remaining": max(0, self.default_limit - current_count)
+                    }
+                    total_executions += current_count
+            
+            return {
+                "default_limit": self.default_limit,
+                "window_seconds": self.window_seconds,
+                "total_executions": total_executions,
+                "active_helpers": len(helper_stats),
+                "helper_stats": helper_stats
+            }
+
+
+# Global helper rate limiter instance
+helper_rate_limiter = HelperRateLimiter(
+    default_limit=int(os.getenv("HELPER_RATE_LIMIT", "10")),
+    window_seconds=int(os.getenv("HELPER_RATE_LIMIT_WINDOW", "60"))
+)
+
+
 class HelperSandbox:
     """Enhanced sandbox for helper execution with resource limits and capability isolation."""
     
@@ -905,6 +1045,14 @@ class HelperExecutor:
         
         # Prepare input JSON
         input_json = json.dumps(input_data)
+        
+        # M6.6: Check helper rate limit (only for execute mode)
+        if mode == "execute":
+            try:
+                helper_rate_limiter.check_helper_rate_limit(helper.helper_id)
+            except HelperRateLimitError as e:
+                self._log_audit("rate_limit_exceeded", helper.helper_id, input_data, error=str(e))
+                raise e
         
         # M6.5: Get capabilities from registry for capability isolation
         registry_entry = self.registry.get_registry_entry(helper.helper_id)
