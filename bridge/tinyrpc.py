@@ -3,6 +3,7 @@ TinyIntent Bridge MVP - FastAPI service for routing and orchestrating AI tasks.
 Implements M2: Experience Store with NDJSON and SQLite logging.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, validator
 import uvicorn
+import httpx
 
 # Load environment variables from .env file if it exists
 def load_env_file():
@@ -335,6 +337,198 @@ rate_limiter = RateLimiter(
     global_limit=int(os.getenv("RATE_LIMIT_GLOBAL", "500")),
     window_seconds=int(os.getenv("RATE_LIMIT_WINDOW", "60"))
 )
+
+# Router & Async Generation System (M7.0)
+class SmallIntentRouter:
+    """Interface to SmallIntent.mlmodel for routing decisions."""
+    
+    def __init__(self, router_path: Optional[Path] = None):
+        if router_path is None:
+            self.router_path = Path(__file__).parent.parent / "router" / "runner" / "run_router.swift"
+        else:
+            self.router_path = router_path
+            
+        # Fallback for when router is not available
+        self.router_available = self.router_path.exists()
+        if not self.router_available:
+            print(f"Warning: Router not found at {self.router_path}, using fallback routing")
+    
+    def route_request(self, text: str) -> Dict[str, Any]:
+        """
+        Route request using SmallIntent.mlmodel.
+        
+        Returns:
+            {"route": "gen|act", "intent": "...", "confidence": 0.95}
+        """
+        if not self.router_available:
+            return self._fallback_routing(text)
+        
+        try:
+            # Call Swift router
+            result = subprocess.run(
+                ["swift", str(self.router_path), text],
+                capture_output=True,
+                text=True,
+                timeout=5  # 5 second timeout for router
+            )
+            
+            if result.returncode != 0:
+                print(f"Router execution failed: {result.stderr}")
+                return self._fallback_routing(text)
+            
+            # Parse JSON response
+            try:
+                return json.loads(result.stdout.strip())
+            except json.JSONDecodeError:
+                print(f"Invalid JSON from router: {result.stdout}")
+                return self._fallback_routing(text)
+                
+        except Exception as e:
+            print(f"Router error: {e}")
+            return self._fallback_routing(text)
+    
+    def _fallback_routing(self, text: str) -> Dict[str, Any]:
+        """Fallback routing logic when router is not available."""
+        text_lower = text.lower()
+        
+        # Check for action-oriented keywords
+        if any(term in text_lower for term in ['bot', 'position', 'trade', 'close', 'stop', 'emergency', 'execute', 'run', 'do']):
+            return {
+                "route": "act",
+                "intent": "bot_management",
+                "confidence": 0.7
+            }
+        
+        # Default to generation
+        return {
+            "route": "gen", 
+            "intent": "general_query",
+            "confidence": 0.6
+        }
+
+
+class AsyncOllamaClient:
+    """Async client for Ollama generation with timeouts, retries, and concurrency control."""
+    
+    def __init__(self):
+        self.ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.gen_timeout = int(os.getenv("GEN_TIMEOUT_S", "20"))
+        self.max_retries = int(os.getenv("GEN_MAX_RETRIES", "2"))
+        self.backoff_ms = int(os.getenv("GEN_BACKOFF_MS", "200"))
+        
+        # Concurrency control - limit concurrent generation requests
+        # Initialize semaphore lazily to handle event loop issues
+        self.concurrency_limit = int(os.getenv("GEN_CONCURRENCY", "4"))
+        self._semaphore = None
+        
+        # HTTP client with timeouts
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.gen_timeout),
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
+        )
+    
+    async def generate_async(self, model: str, prompt: str) -> tuple[str, int]:
+        """
+        Generate text asynchronously with retries and backpressure control.
+        
+        Returns:
+            (generated_text, latency_ms)
+        """
+        # Get or create semaphore lazily
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self.concurrency_limit)
+        
+        async with self._semaphore:  # Limit concurrent requests
+            start_time = time.time()
+            last_exception = None
+            
+            for attempt in range(self.max_retries + 1):
+                try:
+                    # Add backoff delay for retries
+                    if attempt > 0:
+                        delay = (self.backoff_ms / 1000.0) * (2 ** (attempt - 1))
+                        await asyncio.sleep(delay)
+                        
+                        # Log retry attempt
+                        audit_logger.log_entry({
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                            "action": "ollama_retry",
+                            "attempt": attempt + 1,
+                            "model": model,
+                            "delay_ms": int(delay * 1000),
+                            "success": False
+                        })
+                    
+                    # Make API request to Ollama
+                    response = await self.client.post(
+                        f"{self.ollama_host}/api/generate",
+                        json={
+                            "model": model,
+                            "prompt": prompt,
+                            "stream": False
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        generated_text = result.get("response", "")
+                        
+                        end_time = time.time()
+                        latency_ms = int((end_time - start_time) * 1000)
+                        
+                        return generated_text, latency_ms
+                    else:
+                        raise httpx.HTTPStatusError(
+                            f"Ollama API error: {response.status_code}",
+                            request=response.request,
+                            response=response
+                        )
+                        
+                except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as e:
+                    last_exception = e
+                    if attempt < self.max_retries:
+                        continue
+                    else:
+                        # All retries exhausted
+                        end_time = time.time()
+                        latency_ms = int((end_time - start_time) * 1000)
+                        
+                        # Log final failure
+                        audit_logger.log_entry({
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                            "action": "ollama_generation_failed",
+                            "model": model,
+                            "attempts": self.max_retries + 1,
+                            "latency_ms": latency_ms,
+                            "error": str(e),
+                            "success": False
+                        })
+                        
+                        raise HTTPException(
+                            status_code=504,
+                            detail="Generation request timed out or failed after retries",
+                            headers={"error_code": "GENERATION_TIMEOUT"}
+                        )
+    
+    @property
+    def semaphore(self):
+        """Get the semaphore, creating it if necessary."""
+        if self._semaphore is None:
+            try:
+                self._semaphore = asyncio.Semaphore(self.concurrency_limit)
+            except RuntimeError:
+                # No event loop available, create a mock semaphore for testing
+                return type('MockSemaphore', (), {'_value': self.concurrency_limit})()
+        return self._semaphore
+    
+    async def close(self):
+        """Close the HTTP client."""
+        await self.client.aclose()
+
+
+# Initialize router and async client
+router = SmallIntentRouter()
+async_ollama_client = AsyncOllamaClient()
 
 # Perform startup audit integrity check
 print("Performing audit log integrity check...")
@@ -751,11 +945,55 @@ async def route_request(
             detail="No suitable model configured"
         )
     
-    # Handle different route types
-    if request.route == "gen":
-        # Generation route - call ollama
+    # M7.0: Use SmallIntent router for automatic routing when route is "auto"
+    if request.route == "auto":
         try:
-            response_text, latency_ms = call_ollama_generate(model_to_use, request.text)
+            routing_result = router.route_request(request.text)
+            determined_route = routing_result["route"]
+            intent = routing_result["intent"]
+            confidence = routing_result["confidence"]
+            
+            # Log routing decision
+            audit_logger.log_entry({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                "action": "router_decision",
+                "session_id": session_id,
+                "text_length": len(request.text) if request.text else 0,
+                "determined_route": determined_route,
+                "intent": intent,
+                "confidence": confidence,
+                "success": True
+            })
+            
+            # Override route with router decision
+            actual_route = determined_route
+            router_fallback = True
+            
+        except Exception as e:
+            # Router failed, fall back to generation
+            audit_logger.log_entry({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                "action": "router_error",
+                "session_id": session_id,
+                "error": str(e),
+                "success": False
+            })
+            actual_route = "gen"
+            router_fallback = True
+            intent = "general_query"
+            confidence = 0.5
+    else:
+        # Route explicitly specified by user
+        actual_route = request.route
+        router_fallback = False
+        intent = None
+        confidence = None
+    
+    # Handle different route types
+    if actual_route == "gen":
+        # Generation route - call async ollama
+        try:
+            response_text, latency_ms = await async_ollama_client.generate_async(model_to_use, request.text)
             
             # Log successful event
             experience_store.log_request(
@@ -773,7 +1011,8 @@ async def route_request(
                 text_response=response_text,
                 model_used=model_to_use,
                 latency_ms=latency_ms,
-                session_id=session_id
+                session_id=session_id,
+                _router_fallback=router_fallback if request.route == "auto" else None
             )
             
         except HTTPException as e:
@@ -803,7 +1042,7 @@ async def route_request(
                 detail=f"Unexpected error during generation: {str(e)}"
             )
     
-    elif request.route == "act":
+    elif actual_route == "act":
         # Action route - delegate to Helpers Orchestrator
         try:
             start_time = time.time()
@@ -839,11 +1078,22 @@ async def route_request(
                         headers={"error_code": error_code}
                     )
             
-            # Determine helper to use
+            # Determine helper to use - M7.0: Use router intent or explicit helper_id
             if request.helper_id:
                 helper_id = request.helper_id
+            elif intent and intent != "general_query":
+                # Use router intent to determine helper
+                if intent == "bot_management":
+                    helper_id = "bot_guard"
+                elif intent == "system_monitoring":
+                    helper_id = "log_tailer"
+                elif intent == "infrastructure":
+                    helper_id = "ssh_ops"
+                else:
+                    # Fallback to bot_guard for other action intents
+                    helper_id = "bot_guard"
             else:
-                # Use LLM to route to appropriate helper
+                # Use fallback routing logic
                 helper_id = route_to_helper(request.text, model_to_use)
             
             # Prepare helper input
@@ -1332,33 +1582,18 @@ async def route_request(
                 detail=f"Helper execution failed: {sanitized_error}"
             )
     
-    elif request.route == "auto":
-        # Log not implemented event
-        experience_store.log_request(
-            session_id=session_id,
-            text=request.text,
-            route_final="auto",
-            success=False,
-            error_code="NOT_IMPLEMENTED"
-        )
-        # Auto routing - return 501 Not Implemented
-        raise HTTPException(
-            status_code=501,
-            detail="Auto routing not yet implemented - router support coming in M3"
-        )
-    
     else:
         # Log error event
         experience_store.log_request(
             session_id=session_id,
             text=request.text,
-            route_final=request.route,
+            route_final=actual_route,
             success=False,
             error_code="UNKNOWN_ROUTE"
         )
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown route: {request.route}"
+            detail=f"Unknown route: {actual_route}"
         )
 
 
@@ -1597,6 +1832,13 @@ async def emergency_status(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
             status_code=500,
             detail=f"Failed to get emergency status: {str(e)}"
         )
+
+
+# Async client cleanup on shutdown
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up async resources on shutdown."""
+    await async_ollama_client.close()
 
 
 if __name__ == "__main__":
