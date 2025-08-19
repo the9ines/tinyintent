@@ -28,6 +28,8 @@ helpers:
     added: "2024-12-15"
     updated: "2025-08-19"
     maintainer: "TinyIntent Core Team <core@tinyintent.ai>"
+    # M8.6: Health Check Configuration
+    healthcheck: "health.js"
     
   log_tailer:
     name: "Log Tailer"
@@ -47,6 +49,8 @@ helpers:
     added: "2024-10-05"
     updated: "2025-01-15"
     maintainer: "TinyIntent Monitoring <monitoring@tinyintent.ai>"
+    # M8.6: Health Check Configuration
+    healthcheck: "health.py"
     
   ssh_ops:
     name: "SSH Operations"
@@ -69,6 +73,7 @@ helpers:
     # added: "2024-11-20" 
     # updated: "2024-12-01"
     # maintainer: "Infrastructure Team <infra@tinyintent.ai>"
+    # M8.6: No healthcheck defined - testing backward compatibility
 
 # Global settings
 settings:
