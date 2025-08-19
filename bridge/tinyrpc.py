@@ -66,6 +66,586 @@ except ImportError as e:
     HelperRateLimitError = None
 
 
+# M7.2: Router Reliability Monitoring System
+from collections import deque, defaultdict
+from datetime import datetime
+import statistics
+
+class RouterMetrics:
+    """
+    Router reliability monitoring with rolling in-memory buffer.
+    Tracks router decisions, confidence distributions, and performance metrics.
+    """
+    
+    def __init__(self, buffer_size: int = 500):
+        self.buffer_size = buffer_size
+        self.metrics_buffer = deque(maxlen=buffer_size)
+        self.error_buffer = deque(maxlen=50)  # Last 50 errors
+        self.lock = threading.Lock()  # Thread-safe access
+    
+    def record_routing_decision(self, 
+                              route: str, 
+                              intent: str, 
+                              confidence: float, 
+                              latency_ms: float, 
+                              outcome: str,
+                              text_length: int = 0,
+                              session_id: str = "",
+                              abstain_reason: str = None):
+        """Record a router decision for monitoring."""
+        with self.lock:
+            entry = {
+                "timestamp": time.time(),
+                "route": route,
+                "intent": intent, 
+                "confidence": confidence,
+                "latency_ms": latency_ms,
+                "outcome": outcome,  # "preview", "execute", "abstain"
+                "text_length": text_length,
+                "session_id": session_id,
+                "abstain_reason": abstain_reason
+            }
+            self.metrics_buffer.append(entry)
+    
+    def record_error(self, error_type: str, error_message: str, session_id: str = ""):
+        """Record a router error for monitoring."""
+        with self.lock:
+            error_entry = {
+                "timestamp": time.time(),
+                "error_type": error_type,
+                "error_message": error_message,
+                "session_id": session_id
+            }
+            self.error_buffer.append(error_entry)
+    
+    def record_circuit_breaker_event(self, model: str, event_type: str, state: str, 
+                                   session_id: str = "", additional_info: Dict[str, Any] = None):
+        """
+        Record circuit breaker events for monitoring. M7.3
+        
+        Args:
+            model: Model name (e.g., "llama3.2:3b")
+            event_type: "state_change", "failure", "success", "blocked"
+            state: Current circuit breaker state
+            session_id: Optional session ID
+            additional_info: Additional context (failure count, etc.)
+        """
+        with self.lock:
+            cb_entry = {
+                "timestamp": time.time(),
+                "event_type": "circuit_breaker_" + event_type,
+                "model": model,
+                "state": state,
+                "session_id": session_id,
+                "additional_info": additional_info or {}
+            }
+            self.error_buffer.append(cb_entry)  # Use error buffer for circuit breaker events
+    
+    def get_metrics_summary(self) -> Dict[str, Any]:
+        """Get comprehensive router metrics summary."""
+        with self.lock:
+            if not self.metrics_buffer:
+                return self._empty_metrics_summary()
+            
+            # Convert buffer to list for analysis
+            entries = list(self.metrics_buffer)
+            total_count = len(entries)
+            
+            # Confidence histogram (10 bins)
+            confidences = [entry["confidence"] for entry in entries]
+            confidence_histogram = self._create_histogram(confidences, bins=10)
+            
+            # Route distribution
+            route_counts = defaultdict(int)
+            for entry in entries:
+                route_counts[entry["route"]] += 1
+            
+            # Intent distribution
+            intent_counts = defaultdict(int)
+            for entry in entries:
+                intent_counts[entry["intent"]] += 1
+            
+            # Outcome distribution
+            outcome_counts = defaultdict(int)
+            for entry in entries:
+                outcome_counts[entry["outcome"]] += 1
+            
+            # Abstain analysis
+            abstain_count = route_counts.get("abstain", 0)
+            abstain_percentage = (abstain_count / total_count) * 100 if total_count > 0 else 0
+            
+            # Latency analysis
+            latencies = [entry["latency_ms"] for entry in entries if entry["latency_ms"] is not None]
+            avg_latency = statistics.mean(latencies) if latencies else 0
+            latency_p95 = statistics.quantiles(latencies, n=20)[18] if len(latencies) > 20 else (max(latencies) if latencies else 0)
+            
+            # Recent errors
+            recent_errors = list(self.error_buffer)
+            
+            # Time window analysis
+            now = time.time()
+            recent_entries = [e for e in entries if (now - e["timestamp"]) < 3600]  # Last hour
+            recent_abstains = len([e for e in recent_entries if e["route"] == "abstain"])
+            recent_abstain_rate = (recent_abstains / len(recent_entries)) * 100 if recent_entries else 0
+            
+            return {
+                "summary": {
+                    "total_requests": total_count,
+                    "buffer_size": self.buffer_size,
+                    "buffer_utilization": (total_count / self.buffer_size) * 100,
+                    "oldest_entry_age_minutes": (now - entries[0]["timestamp"]) / 60 if entries else 0
+                },
+                "confidence_histogram": confidence_histogram,
+                "route_distribution": dict(route_counts),
+                "intent_distribution": dict(intent_counts),
+                "outcome_distribution": dict(outcome_counts),
+                "abstain_metrics": {
+                    "total_abstains": abstain_count,
+                    "abstain_percentage": round(abstain_percentage, 2),
+                    "recent_abstain_rate_1h": round(recent_abstain_rate, 2)
+                },
+                "latency_metrics": {
+                    "average_ms": round(avg_latency, 2),
+                    "p95_ms": round(latency_p95, 2),
+                    "sample_count": len(latencies)
+                },
+                "error_metrics": {
+                    "recent_error_count": len(recent_errors),
+                    "last_50_errors": recent_errors
+                },
+                "timestamp": now,
+                "generated_at": datetime.fromtimestamp(now).isoformat()
+            }
+    
+    def _create_histogram(self, values: List[float], bins: int = 10) -> Dict[str, Any]:
+        """Create histogram from values."""
+        if not values:
+            return {"bins": [], "counts": [], "total": 0}
+        
+        min_val = min(values)
+        max_val = max(values)
+        
+        # Handle edge case where all values are the same
+        if min_val == max_val:
+            return {
+                "bins": [{"lower": min_val, "upper": min_val + 0.1, "count": len(values)}],
+                "counts": [len(values)],
+                "total": len(values),
+                "min": min_val,
+                "max": max_val
+            }
+        
+        # Create bin edges
+        bin_width = (max_val - min_val) / bins
+        bin_edges = [min_val + i * bin_width for i in range(bins + 1)]
+        bin_counts = [0] * bins
+        bin_info = []
+        
+        # Count values in each bin
+        for value in values:
+            bin_idx = min(int((value - min_val) / bin_width), bins - 1)
+            bin_counts[bin_idx] += 1
+        
+        # Create bin information
+        for i in range(bins):
+            bin_info.append({
+                "lower": round(bin_edges[i], 3),
+                "upper": round(bin_edges[i + 1], 3),
+                "count": bin_counts[i]
+            })
+        
+        return {
+            "bins": bin_info,
+            "counts": bin_counts,
+            "total": len(values),
+            "min": round(min_val, 3),
+            "max": round(max_val, 3)
+        }
+    
+    def _empty_metrics_summary(self) -> Dict[str, Any]:
+        """Return empty metrics summary when no data available."""
+        return {
+            "summary": {
+                "total_requests": 0,
+                "buffer_size": self.buffer_size,
+                "buffer_utilization": 0,
+                "oldest_entry_age_minutes": 0
+            },
+            "confidence_histogram": {"bins": [], "counts": [], "total": 0},
+            "route_distribution": {},
+            "intent_distribution": {},
+            "outcome_distribution": {},
+            "abstain_metrics": {
+                "total_abstains": 0,
+                "abstain_percentage": 0,
+                "recent_abstain_rate_1h": 0
+            },
+            "latency_metrics": {
+                "average_ms": 0,
+                "p95_ms": 0,
+                "sample_count": 0
+            },
+            "error_metrics": {
+                "recent_error_count": 0,
+                "last_50_errors": []
+            },
+            "timestamp": time.time(),
+            "generated_at": datetime.now().isoformat()
+        }
+    
+    def get_recent_entries(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get recent router entries for debugging."""
+        with self.lock:
+            recent = list(self.metrics_buffer)[-limit:]
+            # Add human-readable timestamps
+            for entry in recent:
+                entry["timestamp_iso"] = datetime.fromtimestamp(entry["timestamp"]).isoformat()
+            return recent
+    
+    def flush_to_database(self) -> Dict[str, Any]:
+        """
+        Flush current metrics buffer to database via episode logger. M7.2
+        
+        Returns flush status and statistics.
+        """
+        with self.lock:
+            if not self.metrics_buffer:
+                return {"status": "success", "flushed_count": 0, "message": "No metrics to flush"}
+            
+            # Get copy of buffer and clear it
+            buffer_copy = list(self.metrics_buffer)
+            self.metrics_buffer.clear()
+        
+        # Import here to avoid circular imports
+        try:
+            from episodes import episode_logger
+            return episode_logger.flush_router_metrics(buffer_copy)
+        except ImportError:
+            # Fallback: just return success without flushing
+            return {
+                "status": "warning",
+                "flushed_count": 0,
+                "failed_count": len(buffer_copy),
+                "message": "Episode logger not available, metrics not persisted"
+            }
+
+# Initialize router metrics collector
+router_metrics = RouterMetrics(buffer_size=int(os.getenv("ROUTER_METRICS_BUFFER_SIZE", "500")))
+
+
+# M7.3: Generation Resilience - Circuit Breaker System
+from enum import Enum
+import uuid
+
+class CircuitBreakerState(Enum):
+    """Circuit breaker states."""
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Failing, blocking requests  
+    HALF_OPEN = "half_open"  # Testing if service recovered
+
+class GenerationCircuitBreaker:
+    """
+    Circuit breaker for generation calls with per-model tracking.
+    Prevents repeated slow/failing Ollama calls from hammering the system.
+    """
+    
+    def __init__(self):
+        # Configuration from environment
+        self.fail_window = int(os.getenv("GEN_CB_FAIL_WINDOW", "120"))  # seconds
+        self.threshold = int(os.getenv("GEN_CB_THRESHOLD", "5"))       # failures
+        self.cooldown = int(os.getenv("GEN_CB_COOLDOWN", "30"))        # seconds
+        
+        # Per-model circuit breaker state
+        self.breakers = {}  # model -> breaker state
+        self.lock = threading.Lock()
+        
+        print(f"Circuit breaker config: window={self.fail_window}s, threshold={self.threshold}, cooldown={self.cooldown}s")
+    
+    def _get_breaker_state(self, model: str) -> Dict[str, Any]:
+        """Get or create breaker state for model."""
+        if model not in self.breakers:
+            self.breakers[model] = {
+                "state": CircuitBreakerState.CLOSED,
+                "failures": deque(),  # timestamps of failures
+                "last_failure_time": 0,
+                "last_success_time": time.time(),
+                "total_requests": 0,
+                "total_failures": 0,
+                "state_changed_at": time.time()
+            }
+        return self.breakers[model]
+    
+    def can_execute(self, model: str) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Check if request can execute through circuit breaker.
+        
+        Returns:
+            (can_execute: bool, reason: str, breaker_info: dict)
+        """
+        with self.lock:
+            breaker = self._get_breaker_state(model)
+            current_time = time.time()
+            
+            # Clean old failures outside the window
+            cutoff_time = current_time - self.fail_window
+            breaker["failures"] = deque(
+                timestamp for timestamp in breaker["failures"] 
+                if timestamp > cutoff_time
+            )
+            
+            state = breaker["state"]
+            failure_count = len(breaker["failures"])
+            
+            if state == CircuitBreakerState.CLOSED:
+                # Normal operation - allow request
+                if failure_count >= self.threshold:
+                    # Too many failures, open the breaker
+                    breaker["state"] = CircuitBreakerState.OPEN
+                    breaker["state_changed_at"] = current_time
+                    self._log_circuit_event(model, "open", failure_count)
+                    return False, "gen_circuit_open", self._get_breaker_info(model, breaker)
+                
+                return True, "closed", self._get_breaker_info(model, breaker)
+            
+            elif state == CircuitBreakerState.OPEN:
+                # Breaker is open - check if cooldown period is over
+                if current_time - breaker["state_changed_at"] >= self.cooldown:
+                    # Move to half-open for trial request
+                    breaker["state"] = CircuitBreakerState.HALF_OPEN
+                    breaker["state_changed_at"] = current_time
+                    self._log_circuit_event(model, "half_open", failure_count)
+                    return True, "half_open", self._get_breaker_info(model, breaker)
+                
+                # Still in cooldown
+                return False, "gen_circuit_open", self._get_breaker_info(model, breaker)
+            
+            elif state == CircuitBreakerState.HALF_OPEN:
+                # Only allow one request in half-open state
+                return True, "half_open", self._get_breaker_info(model, breaker)
+    
+    def record_success(self, model: str, session_id: str = ""):
+        """Record successful generation call."""
+        with self.lock:
+            breaker = self._get_breaker_state(model)
+            breaker["total_requests"] += 1
+            breaker["last_success_time"] = time.time()
+            
+            # M7.3: Record success event in router metrics
+            try:
+                router_metrics.record_circuit_breaker_event(
+                    model=model,
+                    event_type="success", 
+                    state=breaker["state"].value,
+                    session_id=session_id,
+                    additional_info={
+                        "total_requests": breaker["total_requests"],
+                        "total_failures": breaker["total_failures"]
+                    }
+                )
+            except:
+                pass  # Don't break on metrics errors
+            
+            if breaker["state"] == CircuitBreakerState.HALF_OPEN:
+                # Half-open success - close the breaker
+                old_state = breaker["state"]
+                breaker["state"] = CircuitBreakerState.CLOSED
+                breaker["state_changed_at"] = time.time()
+                breaker["failures"].clear()  # Reset failure history
+                self._log_circuit_event(model, "closed", 0, session_id, old_state)
+    
+    def record_failure(self, model: str, error_type: str = "unknown", session_id: str = ""):
+        """Record failed generation call."""
+        with self.lock:
+            breaker = self._get_breaker_state(model)
+            current_time = time.time()
+            
+            breaker["total_requests"] += 1
+            breaker["total_failures"] += 1
+            breaker["last_failure_time"] = current_time
+            breaker["failures"].append(current_time)
+            
+            # M7.3: Record failure event in router metrics
+            try:
+                router_metrics.record_circuit_breaker_event(
+                    model=model,
+                    event_type="failure", 
+                    state=breaker["state"].value,
+                    session_id=session_id,
+                    additional_info={
+                        "error_type": error_type,
+                        "failure_count": len(breaker["failures"]),
+                        "total_requests": breaker["total_requests"],
+                        "total_failures": breaker["total_failures"]
+                    }
+                )
+            except:
+                pass  # Don't break on metrics errors
+            
+            if breaker["state"] == CircuitBreakerState.HALF_OPEN:
+                # Half-open failure - reopen the breaker
+                old_state = breaker["state"]
+                breaker["state"] = CircuitBreakerState.OPEN
+                breaker["state_changed_at"] = current_time
+                self._log_circuit_event(model, "open", len(breaker["failures"]), session_id, old_state)
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get circuit breaker statistics."""
+        with self.lock:
+            stats = {
+                "config": {
+                    "fail_window_s": self.fail_window,
+                    "threshold": self.threshold,
+                    "cooldown_s": self.cooldown
+                },
+                "models": {}
+            }
+            
+            for model, breaker in self.breakers.items():
+                stats["models"][model] = self._get_breaker_info(model, breaker)
+            
+            return stats
+    
+    def _get_breaker_info(self, model: str, breaker: Dict[str, Any]) -> Dict[str, Any]:
+        """Get breaker information for model."""
+        current_time = time.time()
+        return {
+            "state": breaker["state"].value,
+            "failure_count": len(breaker["failures"]),
+            "total_requests": breaker["total_requests"],
+            "total_failures": breaker["total_failures"],
+            "failure_rate": (breaker["total_failures"] / max(breaker["total_requests"], 1)) * 100,
+            "last_success_time": breaker["last_success_time"],
+            "last_failure_time": breaker["last_failure_time"],
+            "state_changed_at": breaker["state_changed_at"],
+            "time_since_state_change": current_time - breaker["state_changed_at"],
+            "cooldown_remaining": max(0, self.cooldown - (current_time - breaker["state_changed_at"])) if breaker["state"] == CircuitBreakerState.OPEN else 0
+        }
+    
+    def _log_circuit_event(self, model: str, new_state: str, failure_count: int, 
+                          session_id: str = "", old_state: CircuitBreakerState = None):
+        """Log circuit breaker state change."""
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "gen_circuit",
+            "model": model,
+            "state": new_state,
+            "old_state": old_state.value if old_state else "",
+            "failure_count": failure_count,
+            "threshold": self.threshold,
+            "session_id": session_id,
+            "success": True
+        })
+        
+        # M7.3: Also record in router metrics for monitoring
+        try:
+            router_metrics.record_circuit_breaker_event(
+                model=model,
+                event_type="state_change",
+                state=new_state,
+                session_id=session_id,
+                additional_info={
+                    "old_state": old_state.value if old_state else "",
+                    "failure_count": failure_count,
+                    "threshold": self.threshold
+                }
+            )
+        except:
+            pass  # Don't break on metrics errors
+
+class GenerationTaskManager:
+    """
+    Manages in-flight generation tasks for cancellation support.
+    Tracks asyncio tasks by request_id for clean cancellation.
+    """
+    
+    def __init__(self):
+        self.active_tasks = {}  # request_id -> (task, model, start_time, session_id)
+        self.lock = threading.Lock()
+    
+    def register_task(self, request_id: str, task: asyncio.Task, model: str, session_id: str = ""):
+        """Register an active generation task."""
+        with self.lock:
+            self.active_tasks[request_id] = {
+                "task": task,
+                "model": model,
+                "start_time": time.time(),
+                "session_id": session_id
+            }
+    
+    def unregister_task(self, request_id: str):
+        """Unregister a completed/cancelled task."""
+        with self.lock:
+            return self.active_tasks.pop(request_id, None)
+    
+    def cancel_task(self, request_id: str) -> Dict[str, Any]:
+        """Cancel a generation task by request_id."""
+        with self.lock:
+            task_info = self.active_tasks.get(request_id)
+            if not task_info:
+                return {
+                    "status": "not_found",
+                    "message": f"No active generation task found for request_id: {request_id}"
+                }
+            
+            task = task_info["task"]
+            model = task_info["model"]
+            duration = time.time() - task_info["start_time"]
+            
+            # Cancel the asyncio task
+            cancelled = task.cancel()
+            
+            if cancelled:
+                # Log cancellation
+                audit_logger.log_entry({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                    "action": "gen_cancel",
+                    "request_id": request_id,
+                    "model": model,
+                    "session_id": task_info["session_id"],
+                    "duration_s": round(duration, 2),
+                    "success": True
+                })
+                
+                # Remove from active tasks
+                del self.active_tasks[request_id]
+                
+                return {
+                    "status": "cancelled",
+                    "request_id": request_id,
+                    "model": model,
+                    "duration_s": round(duration, 2),
+                    "message": "Generation task cancelled successfully"
+                }
+            else:
+                return {
+                    "status": "cancel_failed", 
+                    "message": f"Failed to cancel task for request_id: {request_id}"
+                }
+    
+    def get_active_tasks(self) -> Dict[str, Any]:
+        """Get information about active generation tasks."""
+        with self.lock:
+            current_time = time.time()
+            tasks_info = {}
+            
+            for request_id, info in self.active_tasks.items():
+                tasks_info[request_id] = {
+                    "model": info["model"],
+                    "session_id": info["session_id"],
+                    "duration_s": round(current_time - info["start_time"], 2),
+                    "start_time": info["start_time"]
+                }
+            
+            return {
+                "active_count": len(self.active_tasks),
+                "tasks": tasks_info
+            }
+
+# Initialize circuit breaker and task manager
+generation_circuit_breaker = GenerationCircuitBreaker()
+generation_task_manager = GenerationTaskManager()
+
+
 # Initialize FastAPI app
 app = FastAPI(title="TinyIntent Bridge", version="1.0.0")
 
@@ -340,7 +920,7 @@ rate_limiter = RateLimiter(
 
 # Router & Async Generation System (M7.0)
 class SmallIntentRouter:
-    """Interface to SmallIntent.mlmodel for routing decisions."""
+    """Interface to SmallIntent.mlmodel for routing decisions with confidence thresholds."""
     
     def __init__(self, router_path: Optional[Path] = None):
         if router_path is None:
@@ -352,13 +932,24 @@ class SmallIntentRouter:
         self.router_available = self.router_path.exists()
         if not self.router_available:
             print(f"Warning: Router not found at {self.router_path}, using fallback routing")
+        
+        # M7.1: Confidence thresholds for decision making
+        self.min_conf_gen = float(os.getenv("ROUTER_MIN_CONF_GEN", "0.55"))
+        self.min_conf_act = float(os.getenv("ROUTER_MIN_CONF_ACT", "0.65"))
+        self.fallback_threshold = float(os.getenv("ROUTER_FALLBACK_THRESHOLD", "0.4"))
+        
+        print(f"Router confidence thresholds: gen={self.min_conf_gen}, act={self.min_conf_act}, fallback={self.fallback_threshold}")
     
-    def route_request(self, text: str) -> Dict[str, Any]:
+    def route_request(self, text: str, skip_metrics: bool = False) -> Dict[str, Any]:
         """
-        Route request using SmallIntent.mlmodel.
+        Route request using SmallIntent.mlmodel with confidence thresholds.
+        
+        Args:
+            text: Input text to route
+            skip_metrics: Skip recording metrics (used by health checks)
         
         Returns:
-            {"route": "gen|act", "intent": "...", "confidence": 0.95}
+            {"route": "gen|act|abstain", "intent": "...", "confidence": 0.95, "abstain_reason": "..."}
         """
         if not self.router_available:
             return self._fallback_routing(text)
@@ -378,7 +969,11 @@ class SmallIntentRouter:
             
             # Parse JSON response
             try:
-                return json.loads(result.stdout.strip())
+                routing_result = json.loads(result.stdout.strip())
+                
+                # M7.1: Apply confidence thresholds
+                return self._apply_confidence_thresholds(routing_result, text)
+                
             except json.JSONDecodeError:
                 print(f"Invalid JSON from router: {result.stdout}")
                 return self._fallback_routing(text)
@@ -386,6 +981,53 @@ class SmallIntentRouter:
         except Exception as e:
             print(f"Router error: {e}")
             return self._fallback_routing(text)
+    
+    def _apply_confidence_thresholds(self, routing_result: Dict[str, Any], text: str) -> Dict[str, Any]:
+        """
+        Apply confidence thresholds to routing decisions.
+        
+        Args:
+            routing_result: Raw result from router {"route": "gen|act", "confidence": 0.85, "intent": "..."}
+            text: Original text for fallback routing
+        
+        Returns:
+            Enhanced result with potential abstain decisions
+        """
+        route = routing_result.get("route", "gen")
+        confidence = routing_result.get("confidence", 0.5)
+        intent = routing_result.get("intent", "unknown")
+        
+        # Check confidence thresholds
+        if confidence < self.fallback_threshold:
+            # Very low confidence, use fallback routing
+            print(f"Router confidence {confidence:.3f} below fallback threshold {self.fallback_threshold}, using fallback")
+            return self._fallback_routing(text)
+        
+        elif route == "gen" and confidence < self.min_conf_gen:
+            # Generation route but confidence too low
+            return {
+                "route": "abstain",
+                "intent": intent,
+                "confidence": confidence,
+                "abstain_reason": f"Generation confidence {confidence:.3f} below threshold {self.min_conf_gen}",
+                "suggested_route": "gen",
+                "fallback_available": True
+            }
+        
+        elif route == "act" and confidence < self.min_conf_act:
+            # Action route but confidence too low
+            return {
+                "route": "abstain", 
+                "intent": intent,
+                "confidence": confidence,
+                "abstain_reason": f"Action confidence {confidence:.3f} below threshold {self.min_conf_act}",
+                "suggested_route": "act",
+                "fallback_available": True
+            }
+        
+        else:
+            # Confidence meets threshold, return original decision
+            return routing_result
     
     def _fallback_routing(self, text: str) -> Dict[str, Any]:
         """Fallback routing logic when router is not available."""
@@ -427,88 +1069,176 @@ class AsyncOllamaClient:
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
         )
     
-    async def generate_async(self, model: str, prompt: str) -> tuple[str, int]:
+    async def generate_async(self, model: str, prompt: str, request_id: str = None, session_id: str = "") -> tuple[str, int]:
         """
-        Generate text asynchronously with retries and backpressure control.
+        Generate text asynchronously with retries, backpressure control, and circuit breaker.
+        
+        Args:
+            model: Ollama model name
+            prompt: Text to generate from
+            request_id: Optional request ID for cancellation tracking
+            session_id: Session ID for logging
         
         Returns:
             (generated_text, latency_ms)
         """
+        # M7.3: Check circuit breaker first
+        can_execute, reason, breaker_info = generation_circuit_breaker.can_execute(model)
+        if not can_execute:
+            # M7.3: Record blocked event in router metrics
+            try:
+                router_metrics.record_circuit_breaker_event(
+                    model=model,
+                    event_type="blocked",
+                    state=breaker_info.get("state", "unknown"),
+                    session_id=session_id,
+                    additional_info={
+                        "reason": reason,
+                        "cooldown_remaining": breaker_info.get("cooldown_remaining", 0)
+                    }
+                )
+            except:
+                pass  # Don't break on metrics errors
+            
+            # Circuit breaker is open - return 503 immediately
+            raise HTTPException(
+                status_code=503,
+                detail=f"Generation circuit breaker open for model {model}: {reason}",
+                headers={"error_code": "gen_circuit_open", "retry_after": str(int(breaker_info.get("cooldown_remaining", 30)))}
+            )
+        
+        # Generate request_id if not provided
+        if request_id is None:
+            request_id = str(uuid.uuid4())
+        
+        # M7.3: Register task for cancellation tracking
+        current_task = asyncio.current_task()
+        generation_task_manager.register_task(request_id, current_task, model, session_id)
+        
         # Get or create semaphore lazily
         if self._semaphore is None:
             self._semaphore = asyncio.Semaphore(self.concurrency_limit)
         
-        async with self._semaphore:  # Limit concurrent requests
-            start_time = time.time()
-            last_exception = None
-            
-            for attempt in range(self.max_retries + 1):
-                try:
-                    # Add backoff delay for retries
-                    if attempt > 0:
-                        delay = (self.backoff_ms / 1000.0) * (2 ** (attempt - 1))
-                        await asyncio.sleep(delay)
+        try:
+            async with self._semaphore:  # Limit concurrent requests
+                start_time = time.time()
+                last_exception = None
+                
+                for attempt in range(self.max_retries + 1):
+                    try:
+                        # Check for cancellation before each attempt
+                        if current_task.cancelled():
+                            raise asyncio.CancelledError("Generation request was cancelled")
                         
-                        # Log retry attempt
-                        audit_logger.log_entry({
-                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
-                            "action": "ollama_retry",
-                            "attempt": attempt + 1,
-                            "model": model,
-                            "delay_ms": int(delay * 1000),
-                            "success": False
-                        })
-                    
-                    # Make API request to Ollama
-                    response = await self.client.post(
-                        f"{self.ollama_host}/api/generate",
-                        json={
-                            "model": model,
-                            "prompt": prompt,
-                            "stream": False
-                        }
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        generated_text = result.get("response", "")
+                        # Add backoff delay for retries
+                        if attempt > 0:
+                            delay = (self.backoff_ms / 1000.0) * (2 ** (attempt - 1))
+                            await asyncio.sleep(delay)
+                            
+                            # Log retry attempt
+                            audit_logger.log_entry({
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                                "action": "ollama_retry",
+                                "attempt": attempt + 1,
+                                "model": model,
+                                "request_id": request_id,
+                                "delay_ms": int(delay * 1000),
+                                "success": False
+                            })
                         
-                        end_time = time.time()
-                        latency_ms = int((end_time - start_time) * 1000)
-                        
-                        return generated_text, latency_ms
-                    else:
-                        raise httpx.HTTPStatusError(
-                            f"Ollama API error: {response.status_code}",
-                            request=response.request,
-                            response=response
+                        # Make API request to Ollama
+                        response = await self.client.post(
+                            f"{self.ollama_host}/api/generate",
+                            json={
+                                "model": model,
+                                "prompt": prompt,
+                                "stream": False
+                            }
                         )
                         
-                except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as e:
-                    last_exception = e
-                    if attempt < self.max_retries:
-                        continue
-                    else:
-                        # All retries exhausted
+                        if response.status_code == 200:
+                            result = response.json()
+                            generated_text = result.get("response", "")
+                            
+                            end_time = time.time()
+                            latency_ms = int((end_time - start_time) * 1000)
+                            
+                            # M7.3: Record success in circuit breaker
+                            generation_circuit_breaker.record_success(model, session_id)
+                            
+                            # Log successful generation
+                            audit_logger.log_entry({
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                                "action": "ollama_generation_success",
+                                "model": model,
+                                "request_id": request_id,
+                                "latency_ms": latency_ms,
+                                "attempts": attempt + 1,
+                                "success": True
+                            })
+                            
+                            return generated_text, latency_ms
+                        else:
+                            raise httpx.HTTPStatusError(
+                                f"Ollama API error: {response.status_code}",
+                                request=response.request,
+                                response=response
+                            )
+                            
+                    except asyncio.CancelledError:
+                        # Handle task cancellation gracefully
                         end_time = time.time()
                         latency_ms = int((end_time - start_time) * 1000)
                         
-                        # Log final failure
                         audit_logger.log_entry({
                             "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
-                            "action": "ollama_generation_failed",
+                            "action": "ollama_generation_cancelled",
                             "model": model,
-                            "attempts": self.max_retries + 1,
+                            "request_id": request_id,
                             "latency_ms": latency_ms,
-                            "error": str(e),
                             "success": False
                         })
                         
+                        # Don't record as circuit breaker failure for cancellation
                         raise HTTPException(
-                            status_code=504,
-                            detail="Generation request timed out or failed after retries",
-                            headers={"error_code": "GENERATION_TIMEOUT"}
+                            status_code=499,
+                            detail="Generation request was cancelled",
+                            headers={"error_code": "GENERATION_CANCELLED"}
                         )
+                        
+                    except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as e:
+                        last_exception = e
+                        if attempt < self.max_retries:
+                            continue
+                        else:
+                            # All retries exhausted - record failure in circuit breaker
+                            end_time = time.time()
+                            latency_ms = int((end_time - start_time) * 1000)
+                            
+                            # M7.3: Record failure in circuit breaker
+                            error_type = "timeout" if isinstance(e, httpx.TimeoutException) else "connection" if isinstance(e, httpx.ConnectError) else "http_error"
+                            generation_circuit_breaker.record_failure(model, error_type, session_id)
+                            
+                            # Log final failure
+                            audit_logger.log_entry({
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                                "action": "ollama_generation_failed",
+                                "model": model,
+                                "request_id": request_id,
+                                "attempts": self.max_retries + 1,
+                                "latency_ms": latency_ms,
+                                "error": str(e),
+                                "success": False
+                            })
+                            
+                            raise HTTPException(
+                                status_code=504,
+                                detail="Generation request timed out or failed after retries",
+                                headers={"error_code": "GENERATION_TIMEOUT"}
+                            )
+        finally:
+            # M7.3: Always clean up task registration
+            generation_task_manager.unregister_task(request_id)
     
     @property
     def semaphore(self):
@@ -529,6 +1259,9 @@ class AsyncOllamaClient:
 # Initialize router and async client
 router = SmallIntentRouter()
 async_ollama_client = AsyncOllamaClient()
+
+# Track startup time for health endpoint
+startup_time = time.time()
 
 # Perform startup audit integrity check
 print("Performing audit log integrity check...")
@@ -953,6 +1686,57 @@ async def route_request(
             intent = routing_result["intent"]
             confidence = routing_result["confidence"]
             
+            # M7.2: Record router decision metrics
+            start_metrics_time = time.time()
+            try:
+                router_metrics.record_routing_decision(
+                    route=determined_route,
+                    intent=intent,
+                    confidence=confidence,
+                    latency_ms=0,  # Will be updated later with actual latency
+                    outcome="preview" if not request.execute else "execute",
+                    text_length=len(request.text) if request.text else 0,
+                    session_id=session_id,
+                    abstain_reason=routing_result.get("abstain_reason")
+                )
+            except Exception as metrics_error:
+                # Don't let metrics collection break the main flow
+                print(f"Router metrics recording error: {metrics_error}")
+            
+            # M7.1: Handle abstain decisions
+            if determined_route == "abstain":
+                # Router decided to abstain due to low confidence
+                abstain_reason = routing_result.get("abstain_reason", "Low confidence routing decision")
+                suggested_route = routing_result.get("suggested_route", "gen")
+                
+                # Log abstain decision
+                audit_logger.log_entry({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                    "action": "router_abstain",
+                    "session_id": session_id,
+                    "text_length": len(request.text) if request.text else 0,
+                    "suggested_route": suggested_route,
+                    "intent": intent,
+                    "confidence": confidence,
+                    "abstain_reason": abstain_reason,
+                    "success": True
+                })
+                
+                # Return abstain response
+                return RouteResponse(
+                    status="abstain",
+                    route_used="abstain",
+                    text_response=f"Router abstained: {abstain_reason}. Consider being more specific or try manual routing with route=\"{suggested_route}\".",
+                    session_id=session_id,
+                    _router_fallback=False,
+                    reflection={
+                        "abstain_reason": abstain_reason,
+                        "suggested_route": suggested_route,
+                        "confidence": confidence,
+                        "intent": intent
+                    }
+                )
+            
             # Log routing decision
             audit_logger.log_entry({
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
@@ -978,6 +1762,17 @@ async def route_request(
                 "error": str(e),
                 "success": False
             })
+            
+            # M7.2: Record router error metrics
+            try:
+                router_metrics.record_error(
+                    error_type="router_execution_error",
+                    error_message=str(e),
+                    session_id=session_id
+                )
+            except Exception as metrics_error:
+                print(f"Router error metrics recording failed: {metrics_error}")
+            
             actual_route = "gen"
             router_fallback = True
             intent = "general_query"
@@ -1744,6 +2539,353 @@ async def get_rate_limit_stats(auth: bool = Depends(verify_auth)) -> Dict[str, A
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get rate limit stats: {str(e)}"
+        )
+
+
+@app.get("/router/metrics")
+async def get_router_metrics(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    Get router reliability monitoring metrics. M7.2
+    
+    Returns confidence histograms, abstain rates, latency stats,
+    and error tracking for router health monitoring.
+    """
+    try:
+        metrics = router_metrics.get_metrics_summary()
+        return {
+            "status": "success",
+            "router_metrics": metrics,
+            "message": f"Router metrics with {metrics['summary']['total_requests']} requests tracked"
+        }
+    except Exception as e:
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "router_metrics_error",
+            "error": str(e),
+            "success": False
+        })
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get router metrics: {str(e)}"
+        )
+
+
+@app.get("/router/metrics/debug")
+async def get_router_metrics_debug(
+    limit: int = 50,
+    auth: bool = Depends(verify_auth)
+) -> Dict[str, Any]:
+    """
+    Get recent router entries for debugging. M7.2
+    
+    Returns recent router decisions with full details for troubleshooting.
+    """
+    try:
+        if limit > 200:  # Prevent excessive data return
+            limit = 200
+        
+        recent_entries = router_metrics.get_recent_entries(limit)
+        return {
+            "status": "success",
+            "recent_entries": recent_entries,
+            "count": len(recent_entries),
+            "message": f"Retrieved {len(recent_entries)} recent router entries"
+        }
+    except Exception as e:
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "router_metrics_debug_error",
+            "error": str(e),
+            "success": False
+        })
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get router debug metrics: {str(e)}"
+        )
+
+
+@app.post("/router/metrics/flush")
+async def flush_router_metrics(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    Manually flush router metrics buffer to database. M7.2
+    
+    Useful for forcing persistence of current metrics or testing the flush mechanism.
+    """
+    try:
+        flush_result = router_metrics.flush_to_database()
+        
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "router_metrics_flush",
+            "flushed_count": flush_result.get("flushed_count", 0),
+            "success": flush_result.get("status") == "success"
+        })
+        
+        return {
+            "status": "success",
+            "flush_result": flush_result,
+            "message": f"Flush completed: {flush_result.get('message', 'Unknown result')}"
+        }
+    except Exception as e:
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "router_metrics_flush_error",
+            "error": str(e),
+            "success": False
+        })
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to flush router metrics: {str(e)}"
+        )
+
+
+@app.get("/router/metrics/database")
+async def get_router_metrics_database_stats(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    Get router metrics statistics from database. M7.2
+    
+    Returns historical router performance data persisted to database.
+    """
+    try:
+        from episodes import episode_logger
+        db_stats = episode_logger.get_router_metrics_stats()
+        
+        return {
+            "status": "success",
+            "database_stats": db_stats,
+            "message": f"Database contains {db_stats.get('total_requests', 0)} router metrics entries"
+        }
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Episode logger not available for database access"
+        )
+    except Exception as e:
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "router_metrics_database_error",
+            "error": str(e),
+            "success": False
+        })
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get router database stats: {str(e)}"
+        )
+
+
+@app.get("/health")
+async def health_check() -> Dict[str, Any]:
+    """
+    Comprehensive health check endpoint for TinyIntent components.
+    M7.3: Generation Resilience
+    
+    Checks health of:
+    - Bridge API server (always healthy if responding)
+    - Ollama generation service
+    - Swift router runner (if available)
+    - Circuit breaker states
+    - Generation task manager
+    
+    Returns HTTP 200 for healthy, 503 for unhealthy with details.
+    
+    Example usage:
+    curl http://localhost:8787/health
+    """
+    
+    health_status = {
+        "service": "tinyintent-bridge",
+        "version": "2.0",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+        "status": "healthy",
+        "components": {}
+    }
+    
+    overall_healthy = True
+    
+    # 1. Bridge API health (always healthy if we can respond)
+    health_status["components"]["bridge"] = {
+        "status": "healthy",
+        "message": "Bridge API responding normally",
+        "uptime_seconds": int(time.time() - startup_time),
+        "emergency_kill_active": not emergency_kill.is_execution_enabled()
+    }
+    
+    # 2. Ollama health check
+    try:
+        start_time = time.time()
+        response = await async_ollama_client.client.get(
+            f"{async_ollama_client.ollama_host}/api/tags",
+            timeout=5.0
+        )
+        ollama_latency = int((time.time() - start_time) * 1000)
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            available_models = [model["name"] for model in models_data.get("models", [])]
+            
+            health_status["components"]["ollama"] = {
+                "status": "healthy",
+                "message": f"Ollama responding with {len(available_models)} models",
+                "latency_ms": ollama_latency,
+                "host": async_ollama_client.ollama_host,
+                "available_models": available_models[:5],  # Limit to first 5
+                "total_models": len(available_models)
+            }
+        else:
+            raise Exception(f"Ollama returned status {response.status_code}")
+            
+    except Exception as e:
+        overall_healthy = False
+        health_status["components"]["ollama"] = {
+            "status": "unhealthy",
+            "message": f"Ollama health check failed: {str(e)[:200]}",
+            "host": async_ollama_client.ollama_host,
+            "error": str(e)
+        }
+    
+    # 3. Swift router runner health check
+    try:
+        if router.router_available:
+            start_time = time.time()
+            # Test router with simple input
+            test_result = router.route_request("test health check", skip_metrics=True)
+            router_latency = int((time.time() - start_time) * 1000)
+            
+            health_status["components"]["router"] = {
+                "status": "healthy",
+                "message": "Swift router responding normally",
+                "latency_ms": router_latency,
+                "path": str(router.router_path),
+                "test_confidence": test_result.get("confidence", 0.0)
+            }
+        else:
+            health_status["components"]["router"] = {
+                "status": "degraded",
+                "message": "Swift router not available, using fallback routing",
+                "path": str(router.router_path) if router.router_path else "not_configured",
+                "fallback_active": True
+            }
+    except Exception as e:
+        health_status["components"]["router"] = {
+            "status": "unhealthy", 
+            "message": f"Router health check failed: {str(e)[:200]}",
+            "path": str(router.router_path) if router.router_path else "not_configured",
+            "error": str(e)
+        }
+    
+    # 4. Circuit breaker health
+    circuit_breaker_stats = generation_circuit_breaker.get_stats()
+    open_models = [model for model, state in circuit_breaker_stats["model_states"].items() 
+                   if state["state"] == "open"]
+    
+    health_status["components"]["circuit_breaker"] = {
+        "status": "degraded" if open_models else "healthy",
+        "message": f"{len(open_models)} model(s) with open circuit breakers" if open_models else "All circuits healthy",
+        "total_models": len(circuit_breaker_stats["model_states"]),
+        "open_circuits": open_models,
+        "config": {
+            "failure_threshold": circuit_breaker_stats["failure_threshold"],
+            "fail_window_seconds": circuit_breaker_stats["fail_window_seconds"],
+            "cooldown_seconds": circuit_breaker_stats["cooldown_seconds"]
+        }
+    }
+    
+    if open_models:
+        overall_healthy = False
+    
+    # 5. Generation task manager health
+    task_stats = generation_task_manager.get_stats()
+    health_status["components"]["task_manager"] = {
+        "status": "healthy",
+        "message": f"{task_stats['active_tasks']} active generation tasks",
+        "active_tasks": task_stats["active_tasks"],
+        "total_registered": task_stats["total_registered"],
+        "total_cancelled": task_stats["total_cancelled"]
+    }
+    
+    # Set overall status
+    health_status["status"] = "healthy" if overall_healthy else "unhealthy"
+    
+    # Return appropriate HTTP status code
+    if overall_healthy:
+        return health_status
+    else:
+        raise HTTPException(
+            status_code=503,
+            detail=health_status
+        )
+
+
+class GenerationCancelRequest(BaseModel):
+    """Request model for generation cancellation endpoint."""
+    request_id: str
+    reason: Optional[str] = "Manual cancellation requested"
+    
+    @validator('request_id')
+    def request_id_must_not_be_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('request_id field cannot be empty')
+        return v.strip()
+
+
+@app.post("/gen/cancel")
+async def cancel_generation(
+    request: GenerationCancelRequest,
+    auth: bool = Depends(verify_auth)
+) -> Dict[str, Any]:
+    """
+    Cancel an in-flight generation request.
+    M7.3: Generation Resilience
+    
+    Cancels the generation task associated with the provided request_id.
+    The cancelled task will receive an asyncio.CancelledError and return
+    HTTP 499 to the original caller.
+    
+    Example usage:
+    curl -X POST "http://localhost:8787/gen/cancel" \\
+      -H "Content-Type: application/json" \\
+      -H "X-TinyIntent-Secret: your_secret" \\
+      -d '{"request_id": "abc123-def456", "reason": "User cancelled request"}'
+    """
+    
+    try:
+        # Attempt to cancel the task
+        cancel_result = generation_task_manager.cancel_task(request.request_id, request.reason)
+        
+        if cancel_result["success"]:
+            return {
+                "status": "cancelled",
+                "message": f"Successfully cancelled generation task {request.request_id}",
+                "request_id": request.request_id,
+                "reason": request.reason,
+                "task_info": {
+                    "model": cancel_result.get("model"),
+                    "session_id": cancel_result.get("session_id"),
+                    "registered_at": cancel_result.get("registered_at"),
+                    "cancelled_at": cancel_result.get("cancelled_at")
+                }
+            }
+        else:
+            # Task not found or already completed
+            return {
+                "status": "not_found",
+                "message": f"Generation task {request.request_id} not found or already completed",
+                "request_id": request.request_id,
+                "reason": cancel_result.get("reason", "Task not active")
+            }
+            
+    except Exception as e:
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "generation_cancel_error",
+            "request_id": request.request_id,
+            "error": str(e),
+            "success": False
+        })
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to cancel generation: {str(e)}"
         )
 
 
