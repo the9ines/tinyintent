@@ -7,20 +7,21 @@ description: "TinyIntent Helpers Registry - M4 Framework"
 helpers:
   bot_guard:
     name: "Bot Guard"
-    description: "Crypto bot risk management and emergency controls"
+    description: "M8.0: Live crypto exchange integration with sandbox-only defaults"
     enabled: true
     category: "trading"
     risk_level: "high"
-    can_execute: true
+    can_execute: false  # M8.0: Default to safe execution disabled
     manifest_path: "helpers/bot_guard/helper.yaml"
     requires_approval: true
     required_envs:
       - "EXCHANGE_API_KEY"
-      - "EXCHANGE_SECRET"
-      - "EXCHANGE_PASSPHRASE"
+      - "EXCHANGE_API_SECRET"
+      - "EXCHANGE_BASE_URL"
+      - "EXCHANGE_MODE"  # M8.0: Required to enforce sandbox mode
     capabilities:
-      - network
-    safety_notes: "HIGH RISK: This helper can execute real trades and close positions. Ensure exchange credentials are for correct account and consider using sandbox mode for testing."
+      - "network"  # M8.0: Required for live exchange API calls
+    safety_notes: "Sandbox-only by default. Execution requires approval token and EXECUTION_ENABLED=1."
     
   log_tailer:
     name: "Log Tailer"
