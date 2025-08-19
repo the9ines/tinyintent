@@ -3,6 +3,7 @@
 
 version: "1.0"
 description: "TinyIntent Helpers Registry - M4 Framework"
+manifest_version: 1  # M8.1: Helper Extensibility Framework compatibility
 
 helpers:
   bot_guard:

@@ -44,6 +44,175 @@ def load_env_file():
 load_env_file()
 
 
+def validate_helper_manifest(helper_dir: Union[str, Path]) -> Dict[str, Any]:
+    """
+    M8.1: Validate helper manifest and schema files.
+    
+    Ensures:
+    - helper.yaml, input.schema.json, output.schema.json exist
+    - Required fields: id, description, can_execute, risk_level, capabilities
+    - Schema files compile with jsonschema
+    
+    Args:
+        helper_dir: Path to helper directory
+        
+    Returns:
+        dict: Validation result with structure:
+            {
+                "valid": bool,
+                "errors": List[str],
+                "warnings": List[str],
+                "helper_id": str
+            }
+    """
+    helper_dir = Path(helper_dir)
+    helper_id = helper_dir.name
+    
+    result = {
+        "valid": True,
+        "errors": [],
+        "warnings": [],
+        "helper_id": helper_id
+    }
+    
+    # Check required files exist
+    required_files = {
+        "helper.yaml": helper_dir / "helper.yaml",
+        "input.schema.json": helper_dir / "input.schema.json", 
+        "output.schema.json": helper_dir / "output.schema.json"
+    }
+    
+    for file_type, file_path in required_files.items():
+        if not file_path.exists():
+            result["errors"].append(f"Missing required file: {file_type}")
+            result["valid"] = False
+    
+    # If missing core files, return early
+    if not (helper_dir / "helper.yaml").exists():
+        return result
+    
+    # Load and validate helper.yaml
+    try:
+        with open(helper_dir / "helper.yaml", 'r') as f:
+            manifest = yaml.safe_load(f)
+    except (yaml.YAMLError, FileNotFoundError) as e:
+        result["errors"].append(f"Failed to parse helper.yaml: {e}")
+        result["valid"] = False
+        return result
+    
+    # Check required manifest fields
+    required_fields = {
+        "purpose": "purpose description",
+        "capabilities": "capabilities configuration", 
+        "sandbox": "sandbox configuration"
+    }
+    
+    for field, description in required_fields.items():
+        if field not in manifest:
+            result["errors"].append(f"Missing required field: {field} ({description})")
+            result["valid"] = False
+    
+    # Validate capabilities structure
+    if "capabilities" in manifest:
+        caps = manifest["capabilities"]
+        if not isinstance(caps, dict):
+            result["errors"].append("capabilities must be an object/dict")
+            result["valid"] = False
+        else:
+            # Check for required capability fields
+            required_caps = ["preview", "execute"]
+            for cap in required_caps:
+                if cap not in caps:
+                    result["errors"].append(f"Missing required capability: {cap}")
+                    result["valid"] = False
+                elif not isinstance(caps[cap], bool):
+                    result["errors"].append(f"Capability '{cap}' must be boolean")
+                    result["valid"] = False
+    
+    # Validate sandbox configuration
+    if "sandbox" in manifest:
+        sandbox = manifest["sandbox"]
+        if not isinstance(sandbox, dict):
+            result["errors"].append("sandbox must be an object/dict")
+            result["valid"] = False
+        else:
+            # Check for commands
+            if "commands" not in sandbox:
+                result["errors"].append("sandbox.commands is required")
+                result["valid"] = False
+            elif not isinstance(sandbox["commands"], list) or len(sandbox["commands"]) == 0:
+                result["errors"].append("sandbox.commands must be non-empty array")
+                result["valid"] = False
+    
+    # Validate metadata fields if present (from registry compatibility)
+    if "metadata" in manifest:
+        metadata = manifest["metadata"]
+        if isinstance(metadata, dict):
+            # Check risk_level format
+            risk_level = metadata.get("risk_level", "medium")
+            valid_risk_levels = ["low", "medium", "high"]
+            if risk_level not in valid_risk_levels:
+                result["errors"].append(f"Invalid risk_level: {risk_level}. Must be one of: {', '.join(valid_risk_levels)}")
+                result["valid"] = False
+    
+    # Validate schema files compile with jsonschema
+    for schema_type in ["input", "output"]:
+        schema_file = helper_dir / f"{schema_type}.schema.json"
+        if schema_file.exists():
+            try:
+                with open(schema_file, 'r') as f:
+                    schema_data = json.load(f)
+                
+                # Validate it's a valid JSON Schema
+                jsonschema.validators.Draft202012Validator.check_schema(schema_data)
+                
+            except json.JSONDecodeError as e:
+                result["errors"].append(f"{schema_type}.schema.json: Invalid JSON - {e}")
+                result["valid"] = False
+            except jsonschema.SchemaError as e:
+                result["errors"].append(f"{schema_type}.schema.json: Invalid JSON Schema - {e}")
+                result["valid"] = False
+            except Exception as e:
+                result["errors"].append(f"{schema_type}.schema.json: Validation error - {e}")
+                result["valid"] = False
+    
+    # Check for schema path references in manifest
+    if "schema" in manifest:
+        schema_config = manifest["schema"]
+        if isinstance(schema_config, dict):
+            for schema_type in ["input", "output"]:
+                if schema_type in schema_config:
+                    schema_path = schema_config[schema_type]
+                    # Handle relative paths
+                    if not schema_path.startswith("/"):
+                        full_path = helper_dir / schema_path
+                    else:
+                        full_path = Path(schema_path)
+                    
+                    if not full_path.exists():
+                        result["errors"].append(f"Schema path not found: {schema_path}")
+                        result["valid"] = False
+    
+    # Warnings for best practices
+    if "metadata" not in manifest:
+        result["warnings"].append("Missing metadata section (recommended)")
+    
+    if "environment" not in manifest:
+        result["warnings"].append("Missing environment section (recommended)")
+    
+    # Check for executable permissions on main script
+    if "sandbox" in manifest and "commands" in manifest["sandbox"]:
+        commands = manifest["sandbox"]["commands"]
+        if len(commands) > 1:
+            # Second command is usually the script
+            script_name = commands[1]
+            script_path = helper_dir / script_name
+            if script_path.exists() and not os.access(script_path, os.X_OK):
+                result["warnings"].append(f"Script {script_name} is not executable")
+    
+    return result
+
+
 def sanitize_env(env_dict: Dict[str, str]) -> Dict[str, str]:
     """
     Sanitize environment dictionary by redacting sensitive keys.
