@@ -129,7 +129,8 @@ class HelperResolver:
             "errors": {},
             "total": 0,
             "valid": 0,
-            "invalid": 0
+            "invalid": 0,
+            "enabled_metadata": {}  # M8.3: Metadata for enabled helpers
         }
         
         # Iterate over all potential helper directories
@@ -151,6 +152,22 @@ class HelperResolver:
                 if result["valid"]:
                     validation_summary["valid"] += 1
                     validation_summary["enabled"].append(helper_id)
+                    
+                    # M8.3: Collect metadata for enabled helpers
+                    if self.registry:
+                        registry_entry = self.registry.get_registry_entry(helper_id)
+                        if registry_entry:
+                            metadata = {}
+                            if registry_entry.version:
+                                metadata["version"] = registry_entry.version
+                            if registry_entry.updated:
+                                metadata["updated"] = registry_entry.updated
+                            if registry_entry.maintainer:
+                                metadata["maintainer"] = registry_entry.maintainer
+                            if registry_entry.added:
+                                metadata["added"] = registry_entry.added
+                            if metadata:
+                                validation_summary["enabled_metadata"][helper_id] = metadata
                     
                     # Log warnings if any
                     if result["warnings"]:
@@ -184,7 +201,8 @@ class HelperResolver:
             "enabled": validation_summary["enabled"],
             "disabled": validation_summary["disabled"],
             "errors": validation_summary["errors"],
-            "total": validation_summary["total"]
+            "total": validation_summary["total"],
+            "enabled_metadata": validation_summary["enabled_metadata"]  # M8.3: Include metadata
         }
     
     def _log_manifest_validation_failure(self, helper_id: str, validation_result: Dict[str, Any]):

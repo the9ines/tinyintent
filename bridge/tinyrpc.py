@@ -40,7 +40,7 @@ load_env_file()
 # Legacy sanitization functions are now imported from sanitize module
 
 
-from resolve import ModelResolver
+from resolve import ModelResolver, helper_resolver
 from store import experience_store
 from approval import approval_manager
 from episodes import episode_logger
@@ -1009,7 +1009,8 @@ class SmallIntentRouter:
                 "route": "abstain",
                 "intent": intent,
                 "confidence": confidence,
-                "abstain_reason": f"Generation confidence {confidence:.3f} below threshold {self.min_conf_gen}",
+                "abstain_reason": "low_confidence",  # M7.4: Standardized abstain reason
+                "abstain_reason_detail": f"Generation confidence {confidence:.3f} below threshold {self.min_conf_gen}",
                 "suggested_route": "gen",
                 "fallback_available": True
             }
@@ -1020,7 +1021,8 @@ class SmallIntentRouter:
                 "route": "abstain", 
                 "intent": intent,
                 "confidence": confidence,
-                "abstain_reason": f"Action confidence {confidence:.3f} below threshold {self.min_conf_act}",
+                "abstain_reason": "low_confidence",  # M7.4: Standardized abstain reason
+                "abstain_reason_detail": f"Action confidence {confidence:.3f} below threshold {self.min_conf_act}",
                 "suggested_route": "act",
                 "fallback_available": True
             }
@@ -1038,14 +1040,18 @@ class SmallIntentRouter:
             return {
                 "route": "act",
                 "intent": "bot_management",
-                "confidence": 0.7
+                "confidence": 0.7,
+                "abstain_reason": "router_fallback",  # M7.4: Mark as fallback routing
+                "abstain_reason_detail": "Using fallback routing due to router unavailability"
             }
         
         # Default to generation
         return {
             "route": "gen", 
             "intent": "general_query",
-            "confidence": 0.6
+            "confidence": 0.6,
+            "abstain_reason": "router_fallback",  # M7.4: Mark as fallback routing  
+            "abstain_reason_detail": "Using fallback routing due to router unavailability"
         }
 
 
@@ -1313,11 +1319,19 @@ class RouteRequest(BaseModel):
     approval_token: Optional[str] = None  # Required for execute=True
     # Idempotency field
     idempotency_key: Optional[str] = None  # Optional idempotency key
+    # M7.4: Router self-correction & active learning
+    override_route: Optional[str] = None  # gen|act - operator override when router abstains
     
     @validator('text')
     def text_must_not_be_empty(cls, v):
         if not v or not v.strip():
             raise ValueError('text field cannot be empty')
+        return v
+    
+    @validator('override_route')
+    def override_route_must_be_valid(cls, v):
+        if v is not None and v not in ['gen', 'act']:
+            raise ValueError('override_route must be "gen" or "act"')
         return v
 
 
@@ -1706,10 +1720,11 @@ async def route_request(
             # M7.1: Handle abstain decisions
             if determined_route == "abstain":
                 # Router decided to abstain due to low confidence
-                abstain_reason = routing_result.get("abstain_reason", "Low confidence routing decision")
+                abstain_reason = routing_result.get("abstain_reason", "low_confidence")
+                abstain_reason_detail = routing_result.get("abstain_reason_detail", "Low confidence routing decision")
                 suggested_route = routing_result.get("suggested_route", "gen")
                 
-                # Log abstain decision
+                # M7.4: Log abstain decision with enhanced categorization
                 audit_logger.log_entry({
                     "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
                     "action": "router_abstain",
@@ -1718,24 +1733,89 @@ async def route_request(
                     "suggested_route": suggested_route,
                     "intent": intent,
                     "confidence": confidence,
-                    "abstain_reason": abstain_reason,
+                    "abstain_reason": abstain_reason,  # Standardized reason
+                    "abstain_reason_detail": abstain_reason_detail,  # Human readable detail
                     "success": True
                 })
                 
-                # Return abstain response
-                return RouteResponse(
-                    status="abstain",
-                    route_used="abstain",
-                    text_response=f"Router abstained: {abstain_reason}. Consider being more specific or try manual routing with route=\"{suggested_route}\".",
+                # M7.4: Log abstain episode for training
+                episode_logger.log_router_episode(
                     session_id=session_id,
-                    _router_fallback=False,
-                    reflection={
-                        "abstain_reason": abstain_reason,
-                        "suggested_route": suggested_route,
-                        "confidence": confidence,
-                        "intent": intent
-                    }
+                    text=request.text,
+                    original_route="abstain",
+                    confidence=confidence,
+                    intent=intent,
+                    is_abstain=True,
+                    abstain_reason=abstain_reason,
+                    is_override=False,
+                    label_source="router"
                 )
+                
+                # M7.4: Check for operator override
+                if request.override_route:
+                    # Log the override event
+                    audit_logger.log_entry({
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                        "action": "router_override",
+                        "session_id": session_id,
+                        "text_length": len(request.text) if request.text else 0,
+                        "original_route": determined_route,
+                        "override_route": request.override_route,
+                        "abstain_reason": abstain_reason,
+                        "confidence": confidence,
+                        "intent": intent,
+                        "client_ip": fastapi_request.client.host if fastapi_request.client else "unknown",
+                        "user_agent": fastapi_request.headers.get("User-Agent", "unknown"),
+                        "success": True
+                    })
+                    
+                    # Log override episode for training
+                    episode_logger.log_router_episode(
+                        session_id=session_id,
+                        text=request.text,
+                        original_route=determined_route,
+                        confidence=confidence,
+                        intent=intent,
+                        is_abstain=False,
+                        abstain_reason=abstain_reason,
+                        is_override=True,
+                        override_route=request.override_route,
+                        override_confidence=0.9,  # High confidence for operator override
+                        label_source="override"
+                    )
+                    
+                    # Execute override path - set determined_route to override
+                    determined_route = request.override_route
+                    confidence = 0.9  # High confidence for operator override
+                    intent = f"{intent}_override"
+                    
+                    # Log successful override
+                    audit_logger.log_entry({
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                        "action": "router_override_executed",
+                        "session_id": session_id,
+                        "override_route": request.override_route,
+                        "success": True
+                    })
+                    
+                    # Continue with override route (fall through to normal route processing)
+                
+                else:
+                    # No override - return abstain response
+                    return RouteResponse(
+                        status="abstain",
+                        route_used="abstain",
+                        text_response=f"Router abstained: {abstain_reason_detail}. Consider being more specific or try manual routing with route=\"{suggested_route}\".",
+                        session_id=session_id,
+                        _router_fallback=False,
+                        reflection={
+                            "abstain_reason": abstain_reason,
+                            "abstain_reason_detail": abstain_reason_detail,
+                            "suggested_route": suggested_route,
+                            "confidence": confidence,
+                            "intent": intent
+                        }
+                    )
             
             # Log routing decision
             audit_logger.log_entry({
@@ -1788,7 +1868,11 @@ async def route_request(
     if actual_route == "gen":
         # Generation route - call async ollama
         try:
-            response_text, latency_ms = await async_ollama_client.generate_async(model_to_use, request.text)
+            response_text, latency_ms = await async_ollama_client.generate_async(
+                model_to_use, 
+                request.text,
+                session_id=session_id
+            )
             
             # Log successful event
             experience_store.log_request(
@@ -1811,6 +1895,74 @@ async def route_request(
             )
             
         except HTTPException as e:
+            # M7.4: Check if this is a circuit breaker error
+            if e.status_code == 503 and e.headers and e.headers.get("error_code") == "gen_circuit_open":
+                # Circuit breaker is open - convert to abstain with override support
+                
+                # Log circuit breaker abstain event
+                audit_logger.log_entry({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                    "action": "circuit_breaker_abstain",
+                    "session_id": session_id,
+                    "model": model_to_use,
+                    "abstain_reason": "circuit_open",
+                    "success": True
+                })
+                
+                # M7.4: Log abstain episode for training
+                episode_logger.log_router_episode(
+                    session_id=session_id,
+                    text=request.text,
+                    original_route="gen",
+                    confidence=0.0,  # Zero confidence when circuit breaker blocks
+                    intent="generation_blocked",
+                    is_abstain=True,
+                    abstain_reason="circuit_open",
+                    is_override=False,
+                    label_source="circuit_breaker"
+                )
+                
+                # M7.4: Check for operator override
+                if request.override_route == "gen":
+                    # Log the override attempt (but still block for safety)
+                    audit_logger.log_entry({
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+                        "action": "circuit_breaker_override_blocked",
+                        "session_id": session_id,
+                        "model": model_to_use,
+                        "override_route": request.override_route,
+                        "reason": "Circuit breaker overrides not allowed for safety",
+                        "success": False
+                    })
+                    
+                    return RouteResponse(
+                        status="error", 
+                        route_used="abstain",
+                        text_response="Circuit breaker is open for generation. Override not allowed for safety reasons. Please try again later.",
+                        session_id=session_id,
+                        reflection={
+                            "abstain_reason": "circuit_open",
+                            "abstain_reason_detail": str(e.detail),
+                            "override_blocked": True,
+                            "retry_after": e.headers.get("retry_after", "30")
+                        }
+                    )
+                else:
+                    # Normal circuit breaker abstain response
+                    return RouteResponse(
+                        status="abstain",
+                        route_used="abstain", 
+                        text_response=f"Generation temporarily unavailable due to circuit breaker. {str(e.detail)}",
+                        session_id=session_id,
+                        reflection={
+                            "abstain_reason": "circuit_open",
+                            "abstain_reason_detail": str(e.detail),
+                            "suggested_route": "gen",
+                            "retry_after": e.headers.get("retry_after", "30")
+                        }
+                    )
+            
+            # Other HTTP exceptions - continue with original handling
             # Log error event
             experience_store.log_request(
                 session_id=session_id,
@@ -2462,6 +2614,119 @@ async def reload_helpers(auth: bool = Depends(verify_auth)) -> Dict[str, str]:
         )
 
 
+@app.post("/helpers/reload")
+async def reload_helpers_dynamic(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    M8.2: Dynamic helper discovery and hot reload.
+    Triggers re-scan of helpers/ directories with manifest validation.
+    """
+    try:
+        # Use the global helper resolver for thread-safe reload
+        reload_result = helper_resolver.load_helpers()
+        
+        # Log the reload event
+        audit_logger.log_entry({
+            "action": "helpers_dynamic_reload",
+            "enabled_count": len(reload_result["enabled"]),
+            "disabled_count": len(reload_result["disabled"]),
+            "total_count": reload_result["total"],
+            "success": True
+        })
+        
+        return {
+            "status": "success",
+            "message": f"Helper reload completed - {len(reload_result['enabled'])}/{reload_result['total']} helpers enabled",
+            "enabled": reload_result["enabled"],
+            "disabled": reload_result["disabled"], 
+            "errors": reload_result["errors"],
+            "total": reload_result["total"],
+            "enabled_metadata": reload_result.get("enabled_metadata", {})  # M8.3: Include version metadata
+        }
+        
+    except Exception as e:
+        # Log the failure
+        audit_logger.log_entry({
+            "action": "helpers_dynamic_reload",
+            "success": False,
+            "error": str(e)
+        })
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reload helpers: {str(e)}"
+        )
+
+
+@app.get("/helpers")
+async def get_helpers(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    M8.3: Get all loaded helpers with metadata.
+    Returns helpers with id, description, version, updated date, and capabilities.
+    """
+    try:
+        if not helper_resolver.available:
+            raise HTTPException(
+                status_code=503,
+                detail="Helpers framework not available"
+            )
+        
+        # Get helper validation summary which includes all metadata
+        validation_summary = helper_resolver.get_validation_summary()
+        
+        if not validation_summary.get("available", False):
+            raise HTTPException(
+                status_code=503,
+                detail="Helper registry not available"
+            )
+        
+        # Transform the data to focus on enabled helpers with their metadata
+        helpers = []
+        helpers_data = validation_summary.get("helpers", {})
+        
+        for helper_id, helper_info in helpers_data.items():
+            if helper_info.get("is_valid", False):
+                helper_data = {
+                    "id": helper_id,
+                    "name": helper_info.get("name", helper_id),
+                    "description": helper_info.get("description", ""),
+                    "capabilities": helper_info.get("capabilities", []),
+                    "category": helper_info.get("category", "unknown"),
+                    "risk_level": helper_info.get("risk_level", "medium"),
+                    "can_execute": helper_info.get("can_execute", False)
+                }
+                
+                # M8.3: Include version metadata if present
+                if helper_info.get("version"):
+                    helper_data["version"] = helper_info["version"]
+                if helper_info.get("added"):
+                    helper_data["added"] = helper_info["added"]
+                if helper_info.get("updated"):
+                    helper_data["updated"] = helper_info["updated"]
+                if helper_info.get("maintainer"):
+                    helper_data["maintainer"] = helper_info["maintainer"]
+                
+                helpers.append(helper_data)
+        
+        return {
+            "status": "success",
+            "helpers": helpers,
+            "total": len(helpers),
+            "timestamp": datetime.utcnow().isoformat() + 'Z'
+        }
+        
+    except Exception as e:
+        audit_logger.log_entry({
+            "action": "get_helpers",
+            "success": False,
+            "error": str(e)
+        })
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get helpers: {str(e)}"
+        )
+
+
 @app.get("/admin/audit-log-stats")
 async def get_audit_log_stats(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
     """Get audit log statistics and integrity status. M6.2"""
@@ -2670,6 +2935,138 @@ async def get_router_metrics_database_stats(auth: bool = Depends(verify_auth)) -
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get router database stats: {str(e)}"
+        )
+
+
+@app.get("/router/train_summary")
+async def get_router_train_summary(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    Get router training summary for operator visibility. M7.5
+    
+    Returns comprehensive training results from the last retraining run,
+    including model performance, dataset statistics, and sample predictions.
+    """
+    try:
+        from pathlib import Path
+        import json
+        
+        # Look for training summary file
+        project_root = Path(__file__).parent.parent
+        train_summary_path = project_root / "router" / "train_summary.json"
+        
+        if not train_summary_path.exists():
+            # Try alternative locations
+            alt_paths = [
+                project_root / "router" / "train" / "output" / "train_summary.json",
+                project_root / "router" / "train_output" / "train_summary.json"
+            ]
+            
+            for alt_path in alt_paths:
+                if alt_path.exists():
+                    train_summary_path = alt_path
+                    break
+            else:
+                return {
+                    "status": "not_available",
+                    "message": "No training summary available. Run 'make learn' to generate training results.",
+                    "expected_path": str(train_summary_path),
+                    "alternative_paths_checked": [str(p) for p in alt_paths]
+                }
+        
+        # Load training summary
+        with open(train_summary_path, 'r') as f:
+            train_summary = json.load(f)
+        
+        # Add metadata
+        file_stats = train_summary_path.stat()
+        train_summary['file_info'] = {
+            'path': str(train_summary_path),
+            'size_bytes': file_stats.st_size,
+            'modified_timestamp': file_stats.st_mtime,
+            'modified_iso': pd.Timestamp.fromtimestamp(file_stats.st_mtime).isoformat()
+        }
+        
+        # Assess training quality
+        performance = train_summary.get('performance', {})
+        val_accuracy = performance.get('validation_accuracy', 0.0)
+        calibration = performance.get('calibration', {})
+        post_ece = calibration.get('post_calibration_ece', 1.0)
+        
+        # Determine quality assessment
+        quality_assessment = "unknown"
+        quality_details = []
+        
+        if val_accuracy >= 0.95:
+            quality_assessment = "excellent"
+            quality_details.append("Validation accuracy >= 95%")
+        elif val_accuracy >= 0.90:
+            quality_assessment = "good"
+            quality_details.append("Validation accuracy >= 90%")
+        elif val_accuracy >= 0.80:
+            quality_assessment = "acceptable"
+            quality_details.append("Validation accuracy >= 80%")
+        else:
+            quality_assessment = "poor"
+            quality_details.append(f"Validation accuracy only {val_accuracy:.1%}")
+        
+        if post_ece <= 0.05:
+            quality_details.append("Well-calibrated confidence (ECE <= 5%)")
+        elif post_ece <= 0.10:
+            quality_details.append("Moderately calibrated confidence (ECE <= 10%)")
+        else:
+            quality_details.append(f"Poorly calibrated confidence (ECE {post_ece:.1%})")
+        
+        train_summary['quality_assessment'] = {
+            'overall_grade': quality_assessment,
+            'details': quality_details,
+            'ready_for_production': quality_assessment in ["excellent", "good", "acceptable"] and post_ece <= 0.10
+        }
+        
+        # Add operational recommendations
+        recommendations = []
+        if val_accuracy < 0.85:
+            recommendations.append("Consider collecting more training data or reviewing data quality")
+        if post_ece > 0.10:
+            recommendations.append("Model confidence may be miscalibrated - review confidence thresholds")
+        
+        dataset = train_summary.get('dataset', {})
+        total_samples = dataset.get('total_samples', 0)
+        if total_samples < 100:
+            recommendations.append("Small dataset detected - consider generating more episodes")
+        
+        label_dist = dataset.get('label_distribution', {})
+        if label_dist and min(label_dist.values()) / max(label_dist.values()) < 0.3:
+            recommendations.append("Label imbalance detected - ensure balanced training data")
+        
+        train_summary['recommendations'] = recommendations
+        
+        return {
+            "status": "success",
+            "training_summary": train_summary,
+            "message": f"Training summary loaded from {train_summary_path.name}"
+        }
+        
+    except json.JSONDecodeError as e:
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "train_summary_json_error",
+            "error": str(e),
+            "success": False
+        })
+        raise HTTPException(
+            status_code=500,
+            detail=f"Training summary file corrupted: {str(e)}"
+        )
+    except Exception as e:
+        audit_logger.log_entry({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
+            "action": "train_summary_error",
+            "error": str(e),
+            "success": False
+        })
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get training summary: {str(e)}"
         )
 
 
