@@ -200,6 +200,44 @@ def validate_helper_manifest(helper_dir: Union[str, Path]) -> Dict[str, Any]:
     if "environment" not in manifest:
         result["warnings"].append("Missing environment section (recommended)")
     
+    # M8.3: Validate version metadata if present
+    if "version" in manifest:
+        version = manifest["version"]
+        if not _is_valid_semver(version):
+            result["errors"].append(f"Invalid version format: {version} (must be valid semantic version)")
+            result["valid"] = False
+    
+    if "added" in manifest:
+        added_date = manifest["added"]
+        if not _is_valid_date(added_date):
+            result["errors"].append(f"Invalid added date format: {added_date} (must be YYYY-MM-DD)")
+            result["valid"] = False
+    
+    if "updated" in manifest:
+        updated_date = manifest["updated"]
+        if not _is_valid_date(updated_date):
+            result["errors"].append(f"Invalid updated date format: {updated_date} (must be YYYY-MM-DD)")
+            result["valid"] = False
+    
+    # M8.3: Date consistency validation
+    if "added" in manifest and "updated" in manifest:
+        try:
+            from datetime import datetime
+            added_date = datetime.strptime(manifest["added"], '%Y-%m-%d')
+            updated_date = datetime.strptime(manifest["updated"], '%Y-%m-%d')
+            if updated_date < added_date:
+                result["errors"].append(f"Updated date ({manifest['updated']}) cannot be before added date ({manifest['added']})")
+                result["valid"] = False
+        except ValueError:
+            pass  # Date format errors already caught above
+    
+    # M8.3: Additional lifecycle warnings
+    if "version" not in manifest:
+        result["warnings"].append("Missing version field (recommended for tracking)")
+    
+    if "maintainer" not in manifest:
+        result["warnings"].append("Missing maintainer field (recommended for support)")
+    
     # Check for executable permissions on main script
     if "sandbox" in manifest and "commands" in manifest["sandbox"]:
         commands = manifest["sandbox"]["commands"]
@@ -211,6 +249,50 @@ def validate_helper_manifest(helper_dir: Union[str, Path]) -> Dict[str, Any]:
                 result["warnings"].append(f"Script {script_name} is not executable")
     
     return result
+
+
+def _is_valid_semver(version: str) -> bool:
+    """
+    M8.3: Validate semantic version format.
+    
+    Args:
+        version: Version string to validate
+        
+    Returns:
+        bool: True if valid semver, False otherwise
+    """
+    import re
+    
+    # Regex for semantic versioning that rejects leading zeros (major.minor.patch with optional pre-release and build)
+    semver_pattern = r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+    
+    return bool(re.match(semver_pattern, version))
+
+
+def _is_valid_date(date_str: str) -> bool:
+    """
+    M8.3: Validate date format (YYYY-MM-DD).
+    
+    Args:
+        date_str: Date string to validate
+        
+    Returns:
+        bool: True if valid date format, False otherwise
+    """
+    import re
+    from datetime import datetime
+    
+    # Check format first with regex
+    date_pattern = r'^\d{4}-\d{2}-\d{2}$'
+    if not re.match(date_pattern, date_str):
+        return False
+    
+    # Try to parse the date to ensure it's valid
+    try:
+        datetime.strptime(date_str, '%Y-%m-%d')
+        return True
+    except ValueError:
+        return False
 
 
 def sanitize_env(env_dict: Dict[str, str]) -> Dict[str, str]:
@@ -847,6 +929,12 @@ class HelperRegistryEntry:
         self.safety_notes = registry_data.get("safety_notes", "")
         self.capabilities = registry_data.get("capabilities", [])  # M6.5: Capability isolation
         
+        # M8.3: Helper Lifecycle & Versioning metadata
+        self.version = registry_data.get("version")
+        self.added = registry_data.get("added")
+        self.updated = registry_data.get("updated") 
+        self.maintainer = registry_data.get("maintainer")
+        
         # Validation state
         self.is_valid = True
         self.validation_errors = []
@@ -856,6 +944,7 @@ class HelperRegistryEntry:
         # Perform validation
         self._validate_environment()
         self._validate_enabled()
+        self._validate_version_metadata()
     
     def _validate_environment(self):
         """Validate that required environment variables are present."""
@@ -880,14 +969,48 @@ class HelperRegistryEntry:
             self.validation_errors.append(error_msg)
             self.is_valid = False
     
+    def _validate_version_metadata(self):
+        """M8.3: Validate version metadata if present."""
+        # Validate version format
+        if self.version and not _is_valid_semver(self.version):
+            error_msg = f"Invalid version format: {self.version} (must be valid semantic version)"
+            self.validation_errors.append(error_msg)
+            self.is_valid = False
+        
+        # Validate date formats
+        if self.added and not _is_valid_date(self.added):
+            error_msg = f"Invalid added date format: {self.added} (must be YYYY-MM-DD)"
+            self.validation_errors.append(error_msg)
+            self.is_valid = False
+            
+        if self.updated and not _is_valid_date(self.updated):
+            error_msg = f"Invalid updated date format: {self.updated} (must be YYYY-MM-DD)"
+            self.validation_errors.append(error_msg)
+            self.is_valid = False
+        
+        # Date consistency check
+        if self.added and self.updated:
+            try:
+                from datetime import datetime
+                added_date = datetime.strptime(self.added, '%Y-%m-%d')
+                updated_date = datetime.strptime(self.updated, '%Y-%m-%d')
+                if updated_date < added_date:
+                    error_msg = f"Updated date ({self.updated}) cannot be before added date ({self.added})"
+                    self.validation_errors.append(error_msg)
+                    self.is_valid = False
+            except ValueError:
+                pass  # Date format errors already caught above
+    
     def has_capability(self, capability: str) -> bool:
         """Check if helper has a specific capability."""
         return capability in self.capabilities
     
     def get_validation_summary(self) -> Dict[str, Any]:
         """Get validation summary for this registry entry."""
-        return {
+        summary = {
             "helper_id": self.helper_id,
+            "name": self.name,
+            "description": self.description,
             "is_valid": self.is_valid,
             "can_execute": self.can_execute,
             "env_validation_passed": self.env_validation_passed,
@@ -895,8 +1018,22 @@ class HelperRegistryEntry:
             "validation_errors": self.validation_errors,
             "required_envs": self.required_envs,
             "safety_notes": self.safety_notes,
-            "capabilities": self.capabilities  # M6.5: Include capabilities in summary
+            "capabilities": self.capabilities,  # M6.5: Include capabilities in summary
+            "category": self.category,
+            "risk_level": self.risk_level
         }
+        
+        # M8.3: Include version metadata if present
+        if self.version:
+            summary["version"] = self.version
+        if self.added:
+            summary["added"] = self.added
+        if self.updated:
+            summary["updated"] = self.updated
+        if self.maintainer:
+            summary["maintainer"] = self.maintainer
+        
+        return summary
 
 
 class HelperRegistry:

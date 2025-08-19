@@ -23,6 +23,11 @@ helpers:
     capabilities:
       - "network"  # M8.0: Required for live exchange API calls
     safety_notes: "Sandbox-only by default. Execution requires approval token and EXECUTION_ENABLED=1."
+    # M8.3: Helper Lifecycle & Versioning
+    version: "2.1.0"
+    added: "2024-12-15"
+    updated: "2025-08-19"
+    maintainer: "TinyIntent Core Team <core@tinyintent.ai>"
     
   log_tailer:
     name: "Log Tailer"
@@ -37,6 +42,11 @@ helpers:
     capabilities:
       - filesystem
     safety_notes: "Low risk helper for log monitoring. Only reads log files, no system modifications."
+    # M8.3: Helper Lifecycle & Versioning
+    version: "1.2.1"
+    added: "2024-10-05"
+    updated: "2025-01-15"
+    maintainer: "TinyIntent Monitoring <monitoring@tinyintent.ai>"
     
   ssh_ops:
     name: "SSH Operations"
@@ -54,6 +64,11 @@ helpers:
       - network
       - filesystem
     safety_notes: "Medium risk helper for remote server management. Requires SSH access credentials. Can restart services and affect system state."
+    # M8.3: Helper Lifecycle & Versioning (no metadata - testing backward compatibility)
+    # version: "0.9.0-beta"
+    # added: "2024-11-20" 
+    # updated: "2024-12-01"
+    # maintainer: "Infrastructure Team <infra@tinyintent.ai>"
 
 # Global settings
 settings:
