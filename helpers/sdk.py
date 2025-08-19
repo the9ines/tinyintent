@@ -1577,6 +1577,190 @@ class HelperExecutor:
             print(f"Warning: Failed to write audit log: {e}")
 
 
+def load_helper_schemas(helper_dir: Union[str, Path]) -> Dict[str, Any]:
+    """
+    M8.4: Load and return input/output schemas for a helper.
+    
+    Args:
+        helper_dir: Path to helper directory
+        
+    Returns:
+        dict: Contains input_schema, output_schema, and metadata
+    """
+    helper_dir = Path(helper_dir)
+    result = {
+        "input_schema": None,
+        "output_schema": None,
+        "error": None
+    }
+    
+    try:
+        # Load input schema
+        input_schema_path = helper_dir / "input.schema.json"
+        if input_schema_path.exists():
+            with open(input_schema_path, 'r') as f:
+                result["input_schema"] = json.load(f)
+        else:
+            result["error"] = "input.schema.json not found"
+            return result
+        
+        # Load output schema
+        output_schema_path = helper_dir / "output.schema.json"
+        if output_schema_path.exists():
+            with open(output_schema_path, 'r') as f:
+                result["output_schema"] = json.load(f)
+        else:
+            result["error"] = "output.schema.json not found"
+            # Clear input_schema as well since we failed to load the complete set
+            result["input_schema"] = None
+            return result
+            
+    except json.JSONDecodeError as e:
+        result["error"] = f"Invalid JSON in schema file: {e}"
+    except Exception as e:
+        result["error"] = f"Failed to load schemas: {e}"
+    
+    return result
+
+
+def get_helper_introspection_data(helper_id: str) -> Dict[str, Any]:
+    """
+    M8.4: Get complete introspection data for a helper including manifest, metadata, and schemas.
+    
+    Args:
+        helper_id: ID of the helper to introspect
+        
+    Returns:
+        dict: Complete helper information with sanitized sensitive fields
+    """
+    # Check if helper registry is available by checking if it has any registry entries
+    if not hasattr(helper_registry, 'registry_entries') or not isinstance(helper_registry.registry_entries, dict):
+        return {
+            "error": "helper_registry_unavailable",
+            "detail": "Helper registry not available"
+        }
+    
+    # Check if helper exists in registry
+    registry_entry = helper_registry.get_registry_entry(helper_id)
+    if not registry_entry:
+        return {
+            "error": "helper_not_found",
+            "detail": f"Helper '{helper_id}' not found in registry"
+        }
+    
+    # Get helper directory
+    helpers_dir = Path(__file__).parent
+    helper_dir = helpers_dir / helper_id
+    
+    if not helper_dir.exists():
+        return {
+            "error": "helper_directory_not_found", 
+            "detail": f"Helper directory not found: {helper_dir}"
+        }
+    
+    # Load manifest
+    manifest_path = helper_dir / "helper.yaml"
+    manifest = {}
+    
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, 'r') as f:
+                manifest = yaml.safe_load(f) or {}
+        except Exception as e:
+            return {
+                "error": "manifest_load_failed",
+                "detail": f"Failed to load manifest: {e}"
+            }
+    
+    # Load schemas
+    schemas = load_helper_schemas(helper_dir)
+    if schemas.get("error"):
+        return {
+            "error": "schema_load_failed",
+            "detail": schemas["error"]
+        }
+    
+    # Build introspection response
+    introspection_data = {
+        "helper_id": helper_id,
+        "name": registry_entry.name,
+        "description": registry_entry.description,
+        "enabled": registry_entry.enabled,
+        "category": registry_entry.category,
+        "risk_level": registry_entry.risk_level,
+        "can_execute": registry_entry.can_execute,
+        "requires_approval": registry_entry.requires_approval,
+        "capabilities": registry_entry.capabilities,
+        "is_valid": registry_entry.is_valid,
+        "manifest": manifest,
+        "input_schema": schemas["input_schema"],
+        "output_schema": schemas["output_schema"]
+    }
+    
+    # Add version metadata if present
+    if registry_entry.version:
+        introspection_data["version"] = registry_entry.version
+    if registry_entry.added:
+        introspection_data["added"] = registry_entry.added
+    if registry_entry.updated:
+        introspection_data["updated"] = registry_entry.updated
+    if registry_entry.maintainer:
+        introspection_data["maintainer"] = registry_entry.maintainer
+    
+    # Add validation errors/warnings if any
+    if registry_entry.validation_errors:
+        introspection_data["validation_errors"] = registry_entry.validation_errors
+    if registry_entry.missing_envs:
+        introspection_data["missing_envs"] = registry_entry.missing_envs
+    
+    # Sanitize sensitive fields in manifest
+    sanitized_manifest = _sanitize_manifest_for_introspection(manifest)
+    introspection_data["manifest"] = sanitized_manifest
+    
+    return introspection_data
+
+
+def _sanitize_manifest_for_introspection(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    M8.4: Sanitize manifest for safe introspection by redacting sensitive fields.
+    
+    Args:
+        manifest: Raw manifest data
+        
+    Returns:
+        dict: Sanitized manifest with sensitive fields redacted
+    """
+    if not isinstance(manifest, dict):
+        return manifest
+    
+    # Create a deep copy to avoid modifying original
+    import copy
+    sanitized = copy.deepcopy(manifest)
+    
+    # Redact sensitive environment variable values
+    if "required_envs" in sanitized:
+        # Keep the env names but don't expose values
+        pass  # Env names are not sensitive, just keep them
+    
+    # Redact any credential fields that might be in metadata
+    if "metadata" in sanitized and isinstance(sanitized["metadata"], dict):
+        metadata = sanitized["metadata"]
+        for key in list(metadata.keys()):
+            key_lower = key.lower()
+            if any(pattern in key_lower for pattern in ['key', 'secret', 'token', 'password', 'credential']):
+                metadata[key] = "****"
+    
+    # Redact any sensitive sandbox configuration
+    if "sandbox" in sanitized and isinstance(sanitized["sandbox"], dict):
+        sandbox = sanitized["sandbox"]
+        if "env" in sandbox and isinstance(sandbox["env"], dict):
+            # Redact environment variable values
+            for env_key in sandbox["env"]:
+                sandbox["env"][env_key] = "****"
+    
+    return sanitized
+
+
 # Global instances
 helper_registry = HelperRegistry()
 helper_executor = HelperExecutor(helper_registry)

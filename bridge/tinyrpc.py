@@ -2727,6 +2727,162 @@ async def get_helpers(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
         )
 
 
+@app.get("/helpers/{helper_id}")
+async def get_helper_details(helper_id: str, auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    M8.4: Get detailed information for a specific helper including manifest, metadata, and schemas.
+    Returns complete helper introspection data with sanitized sensitive fields.
+    """
+    try:
+        if not helper_resolver.available:
+            raise HTTPException(
+                status_code=503,
+                detail="Helpers framework not available"
+            )
+        
+        # Import SDK functions for introspection
+        import sys
+        from pathlib import Path
+        sys.path.append(str(Path(__file__).parent.parent / "helpers"))
+        
+        from sdk import get_helper_introspection_data
+        
+        # Get introspection data
+        introspection_data = get_helper_introspection_data(helper_id)
+        
+        # Check for errors
+        if "error" in introspection_data:
+            error_code = introspection_data["error"]
+            
+            if error_code in ["helper_not_found", "helper_directory_not_found"]:
+                raise HTTPException(
+                    status_code=404,
+                    detail=introspection_data["detail"]
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=introspection_data["detail"]
+                )
+        
+        # Add timestamp and wrap in standard response
+        result = {
+            "status": "success",
+            "helper": introspection_data,
+            "timestamp": datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        # Log successful introspection
+        audit_logger.log_entry({
+            "action": "get_helper_details",
+            "helper_id": helper_id,
+            "success": True,
+            "user_agent": request.headers.get("user-agent", "unknown")
+        })
+        
+        return result
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        audit_logger.log_entry({
+            "action": "get_helper_details",
+            "helper_id": helper_id,
+            "success": False,
+            "error": str(e)
+        })
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get helper details: {str(e)}"
+        )
+
+
+@app.get("/helpers/schemas/{helper_id}")
+async def get_helper_schemas(helper_id: str, auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
+    """
+    M8.4: Get only the JSON schemas for a specific helper for tooling/UI.
+    Returns input and output schemas without other metadata.
+    """
+    try:
+        if not helper_resolver.available:
+            raise HTTPException(
+                status_code=503,
+                detail="Helpers framework not available"
+            )
+        
+        # Import SDK functions for schema loading
+        import sys
+        from pathlib import Path
+        sys.path.append(str(Path(__file__).parent.parent / "helpers"))
+        
+        from sdk import helper_registry, load_helper_schemas
+        
+        # Check if helper exists in registry
+        registry_entry = helper_registry.get_registry_entry(helper_id)
+        if not registry_entry:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Helper '{helper_id}' not found in registry"
+            )
+        
+        # Get helper directory
+        helpers_dir = Path(__file__).parent.parent / "helpers"
+        helper_dir = helpers_dir / helper_id
+        
+        if not helper_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Helper directory not found: {helper_dir}"
+            )
+        
+        # Load schemas
+        schemas = load_helper_schemas(helper_dir)
+        if schemas.get("error"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load schemas: {schemas['error']}"
+            )
+        
+        # Return only the schemas
+        result = {
+            "status": "success",
+            "helper_id": helper_id,
+            "input_schema": schemas["input_schema"],
+            "output_schema": schemas["output_schema"],
+            "timestamp": datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        # Log successful schema access
+        audit_logger.log_entry({
+            "action": "get_helper_schemas",
+            "helper_id": helper_id,
+            "success": True,
+            "user_agent": request.headers.get("user-agent", "unknown")
+        })
+        
+        return result
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        audit_logger.log_entry({
+            "action": "get_helper_schemas",
+            "helper_id": helper_id,
+            "success": False,
+            "error": str(e)
+        })
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get helper schemas: {str(e)}"
+        )
+
+
 @app.get("/admin/audit-log-stats")
 async def get_audit_log_stats(auth: bool = Depends(verify_auth)) -> Dict[str, Any]:
     """Get audit log statistics and integrity status. M6.2"""
