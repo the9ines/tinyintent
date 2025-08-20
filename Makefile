@@ -34,7 +34,7 @@ bridgesrv: ## Start the Bridge API service
 	@echo "$(GREEN)Starting TinyIntent Bridge Service...$(NC)"
 	@cd $(BRIDGE_DIR) && TINYINTENT_SECRET=${TINYINTENT_SECRET} $(PYTHON) tinyrpc.py
 
-doctor: ## Show model/hardware readiness
+health: ## Show basic model/hardware readiness (quick check)
 	@echo "$(GREEN)TinyIntent System Health Check$(NC)"
 	@echo "================================"
 	@echo "Project root: $(PROJECT_ROOT)"
@@ -94,6 +94,18 @@ learn: ## Automated learning loop: export episodes → train → evaluate
 	@echo ""
 	@echo "$(GREEN)✅ Learning loop completed!$(NC)"
 
+learn-dry: ## M7.5: Dry-run learning loop analysis without training
+	@echo "$(GREEN)Starting TinyIntent Learning Loop (DRY RUN)...$(NC)"
+	@echo "=============================================="
+	@echo "$(YELLOW)🔍 Analyzing episodes and training readiness...$(NC)"
+	@$(PYTHON) scripts/export_episodes.py --dry-run
+	@echo ""
+	@echo "$(YELLOW)💡 Next steps if satisfied with analysis:$(NC)"
+	@echo "  1. Run 'make learn' for actual training"
+	@echo "  2. Check GET /router/train_summary for results"
+	@echo ""
+	@echo "$(GREEN)✅ Learning loop dry-run completed!$(NC)"
+
 promote: ## Promote evaluated model to active use if it meets criteria
 	@echo "$(GREEN)Promoting Router Model...$(NC)"
 	@echo "========================="
@@ -137,18 +149,27 @@ backup-data: ## Backup episode data
 	@echo "$(GREEN)✅ Episode data backed up$(NC)"
 
 ##@ Development Tools
-lint: ## Run code linting (if tools available)
-	@echo "$(GREEN)Running code linting...$(NC)"
-	@cd $(BRIDGE_DIR) && $(PYTHON) -m py_compile *.py && echo "✅ Python syntax OK" || echo "❌ Python syntax errors"
+lint: ## Run ruff linting on Python code
+	@echo "$(GREEN)Running ruff linting...$(NC)"
+	@ruff check . || echo "$(YELLOW)Install ruff with: pip install ruff$(NC)"
 
-format: ## Format code (if tools available)  
-	@echo "$(GREEN)Formatting code...$(NC)"
-	@echo "$(YELLOW)Manual code formatting required$(NC)"
+format: ## Format code with ruff
+	@echo "$(GREEN)Formatting code with ruff...$(NC)"
+	@ruff format . || echo "$(YELLOW)Install ruff with: pip install ruff$(NC)"
 
-test: ## Run basic smoke tests
-	@echo "$(GREEN)Running smoke tests...$(NC)"
-	@cd $(BRIDGE_DIR) && TINYINTENT_SECRET=test $(PYTHON) -c "import tinyrpc; print('✅ Bridge imports OK')" || echo "❌ Bridge import failed"
-	@test -f $(ROUTER_DIR)/data/intents.tsv && echo "✅ Training data present" || echo "❌ Training data missing"
+typecheck: ## Run mypy type checking
+	@echo "$(GREEN)Running mypy type checking...$(NC)"
+	@mypy . || echo "$(YELLOW)Install mypy with: pip install mypy$(NC)"
+
+test: ## Run pytest tests
+	@echo "$(GREEN)Running pytest tests...$(NC)"
+	@pytest tests/ -v || echo "$(YELLOW)Install pytest with: pip install pytest$(NC)"
+
+doctor: ## Run local CI and system health checks
+	@echo "$(GREEN)Running TinyIntent Doctor...$(NC)"
+	@echo "============================"
+	@$(PYTHON) scripts/ci_local.py
+	@$(PYTHON) scripts/doctor.py
 
 ##@ Utilities
 clean: router-clean ## Clean all build artifacts
