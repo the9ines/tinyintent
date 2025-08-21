@@ -1,5 +1,6 @@
 # TinyIntent Helpers Registry
 # Defines all registered helpers for the Helpers Framework v1
+# M9.1: Safe-by-default configuration for production deployments
 
 version: "1.0"
 description: "TinyIntent Helpers Registry - M4 Framework"
@@ -28,6 +29,11 @@ helpers:
     added: "2024-12-15"
     updated: "2025-08-19"
     maintainer: "TinyIntent Core Team <core@tinyintent.ai>"
+    # M10.2: Agent Lifecycle Governance
+    lifecycle:
+      state: "trusted"  # draft|trusted|deprecated|retired
+      since: "2024-12-15"
+      notes: "Core helper - production ready"
     # M8.6: Health Check Configuration
     healthcheck: "health.js"
     
@@ -37,9 +43,9 @@ helpers:
     enabled: true
     category: "monitoring"
     risk_level: "low"
-    can_execute: true
+    can_execute: false  # M9.1: Safe default - requires explicit opt-in
     manifest_path: "helpers/log_tailer/helper.yaml"
-    requires_approval: false
+    requires_approval: true  # M9.1: Safe default - require approval for all helpers
     required_envs: []
     capabilities:
       - filesystem
@@ -49,6 +55,11 @@ helpers:
     added: "2024-10-05"
     updated: "2025-01-15"
     maintainer: "TinyIntent Monitoring <monitoring@tinyintent.ai>"
+    # M10.2: Agent Lifecycle Governance
+    lifecycle:
+      state: "trusted"  # draft|trusted|deprecated|retired
+      since: "2024-10-05"
+      notes: "Core monitoring helper - stable"
     # M8.6: Health Check Configuration
     healthcheck: "health.py"
     
@@ -57,8 +68,8 @@ helpers:
     description: "Remote bot management via SSH: restart, status, logs"
     enabled: true
     category: "infrastructure"
-    risk_level: "medium"
-    can_execute: true
+    risk_level: "high"  # M9.1: SSH operations are high risk
+    can_execute: false  # M9.1: Safe default - requires explicit opt-in
     manifest_path: "helpers/ssh_ops/helper.yaml"
     requires_approval: true
     required_envs:
@@ -73,11 +84,21 @@ helpers:
     # added: "2024-11-20" 
     # updated: "2024-12-01"
     # maintainer: "Infrastructure Team <infra@tinyintent.ai>"
+    # M10.2: Agent Lifecycle Governance (testing backward compatibility - no lifecycle field)
+    # lifecycle:
+    #   state: "draft"  # Would default to trusted for core helpers
+    #   since: "2024-11-20"
+    #   notes: "Testing helper without lifecycle metadata"
     # M8.6: No healthcheck defined - testing backward compatibility
 
-# Global settings
+# Global settings - M9.1: Safe-by-default configuration
 settings:
   default_timeout: 5
   max_helpers: 10
   audit_required: true
   preview_only: true  # M4: Only preview mode enabled
+  # M9.1: Production safety defaults
+  execution_enabled: false  # Requires explicit EXECUTION_ENABLED=1 env var
+  default_can_execute: false  # All helpers require explicit opt-in
+  default_requires_approval: true  # All helpers require approval by default
+  default_risk_level: "high"  # Conservative risk assessment
