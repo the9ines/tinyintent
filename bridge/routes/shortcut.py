@@ -17,6 +17,10 @@ from ..shortcut_format import (
     get_shortcut_error_response
 )
 from ..security import constant_time_compare
+from ..router_client import SmallIntentRouter
+from ..gen_client import async_ollama_client
+from helpers.executor import HelperExecutor
+from helpers.registry import HelperRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +97,142 @@ async def shortcut_route(
         max_len = int(os.environ.get('SHORTCUT_MAX_LEN', '800'))
         clean_text = sanitize_short_input(request.text, max_len)
         
-        # Mock response for current implementation
-        # TODO: Replace with actual TinyIntent routing
-        mock_payload = {
+        # Route through TinyIntent system
+        session_id = request.session_id or f"shortcut-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+        
+        # Initialize router with fallback capability
+        try:
+            router_client = SmallIntentRouter(require_models=False)
+        except Exception:
+            router_client = None
+        
+        # Determine route using router or fallback logic
+        if router_client and router_client.router_available and router_client.models_available:
+            try:
+                route_result = router_client.route_request(clean_text)
+                route_used = route_result["route"]
+                router_confidence = route_result.get("confidence", 0.0)
+                intent = route_result.get("intent", "unknown")
+            except Exception as e:
+                logger.warning(f"Router failed, using fallback: {e}")
+                route_used = "gen" if any(word in clean_text.lower() for word in ["what", "how", "why", "when", "where", "explain", "tell me"]) else "act"
+                router_confidence = 0.0
+                intent = "fallback"
+        else:
+            # Fallback routing logic
+            route_used = "gen" if any(word in clean_text.lower() for word in ["what", "how", "why", "when", "where", "explain", "tell me"]) else "act"
+            router_confidence = 0.0
+            intent = "fallback"
+        
+        response_text = ""
+        execution_result = None
+        
+        # Handle generation requests
+        if route_used == "gen":
+            try:
+                # Generate response using Ollama
+                model = os.environ.get('OLLAMA_MODEL', 'llama3.2:3b')
+                prompt = f"Answer this question concisely for voice response (max 2 sentences): {clean_text}"
+                
+                response_text_raw, latency_ms = await async_ollama_client.generate_async(
+                    model=model,
+                    prompt=prompt,
+                    session_id=session_id
+                )
+                
+                generation_result = {
+                    "text": response_text_raw,
+                    "model": model,
+                    "latency_ms": latency_ms,
+                    "tokens": len(response_text_raw.split()) if response_text_raw else 0
+                }
+                response_text = generation_result.get("text", "").strip()
+                
+                # Optimize for voice output
+                if len(response_text) > 280:
+                    # Find last sentence that fits
+                    sentences = response_text.split('. ')
+                    truncated = ""
+                    for sentence in sentences:
+                        if len(truncated + sentence) <= 277:
+                            truncated += sentence + ". "
+                        else:
+                            break
+                    response_text = truncated.strip() or response_text[:277] + "..."
+                
+                execution_result = {
+                    "generation_used": True,
+                    "model": generation_result.get("model", "unknown"),
+                    "tokens": generation_result.get("tokens", 0),
+                    "latency_ms": generation_result.get("latency_ms", 0)
+                }
+                
+            except Exception as e:
+                logger.error(f"Generation failed: {e}")
+                response_text = f"I understand you asked: '{clean_text}'. However, I'm having trouble generating a response right now. Please try again in a moment."
+                execution_result = {"generation_used": False, "error": str(e)}
+        
+        # Handle action requests
+        elif route_used == "act":
+            try:
+                # Initialize helper execution
+                registry = HelperRegistry()
+                executor = HelperExecutor(registry)
+                
+                # For voice interface, we'll try to match common helpers
+                helper_candidates = []
+                text_lower = clean_text.lower()
+                
+                if any(word in text_lower for word in ["log", "error", "tail", "check"]):
+                    helper_candidates.append("log_tailer")
+                elif any(word in text_lower for word in ["trade", "position", "crypto", "bot", "close", "buy", "sell"]):
+                    helper_candidates.append("bot_guard")
+                
+                if helper_candidates:
+                    # Try the first matching helper
+                    helper_id = helper_candidates[0]
+                    
+                    # Simple input mapping for voice commands
+                    helper_input = {"operation": "status", "text": clean_text}
+                    if "close" in text_lower:
+                        helper_input["operation"] = "close_position"
+                    elif "position" in text_lower or "status" in text_lower:
+                        helper_input["operation"] = "get_positions"
+                    
+                    # Execute in preview mode for safety
+                    result = executor.preview(helper_id, helper_input)
+                    
+                    if result.get("status") == "success":
+                        response_text = result.get("message", f"Action executed successfully: {clean_text}")
+                        execution_result = {
+                            "helper_used": helper_id,
+                            "helper_input": helper_input,
+                            "preview_mode": True,
+                            "execution_time_ms": result.get("execution_time_ms", 0)
+                        }
+                    else:
+                        response_text = f"I couldn't complete that action: {result.get('message', 'Unknown error')}"
+                        execution_result = {"helper_used": helper_id, "error": result.get("message")}
+                else:
+                    response_text = f"I understand you want to take an action: '{clean_text}'. However, I'm not sure which specific action to perform. Try being more specific."
+                    execution_result = {"action_recognized": False, "reason": "no_matching_helper"}
+                    
+            except Exception as e:
+                logger.error(f"Helper execution failed: {e}")
+                response_text = f"I understand you want to take an action: '{clean_text}'. However, I'm having trouble processing actions right now."
+                execution_result = {"action_recognized": True, "error": str(e)}
+        
+        # Create response payload
+        response_payload = {
             "status": "success",
-            "route_used": "gen" if "what" in clean_text.lower() or "how" in clean_text.lower() else "act",
-            "text": f"I received your command: '{clean_text}'. This is a test response for iPhone Shortcut integration.",
-            "session_id": request.session_id or "shortcut-session",
+            "route_used": route_used,
+            "text": response_text,
+            "session_id": session_id,
             "mode": request.mode,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "router_confidence": router_confidence,
+            "intent": intent,
+            "execution_result": execution_result
         }
         
         # Check execution mode
@@ -114,20 +245,22 @@ async def shortcut_route(
         
         # Format response based on return format
         if request.return_format == "text":
-            formatted = format_shortcut_response(mock_payload, "text")
+            formatted = format_shortcut_response(response_payload, "text")
             return ShortcutRouteResponse(**formatted)
         elif request.return_format == "json":
-            return ShortcutRouteResponse(data=mock_payload)
+            return ShortcutRouteResponse(data=response_payload)
         else:
-            # Fallback formatting
-            speak_text = mock_payload.get("text", "Request processed successfully.")
-            if len(speak_text) > 280:
+            # Default voice-optimized formatting
+            speak_text = response_payload.get("text", "Request processed successfully.")
+            is_truncated = len(speak_text) > 280
+            
+            if is_truncated:
                 speak_text = speak_text[:277] + "..."
             
             return ShortcutRouteResponse(
                 speak=speak_text,
-                truncated=len(speak_text) > 280,
-                data=mock_payload
+                truncated=is_truncated,
+                data=response_payload
             )
             
     except ValueError as e:
