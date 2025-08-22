@@ -72,7 +72,7 @@ router-train: ## Train the SmallIntent model and produce CoreML artifacts
 	@test -f $(ROUTER_DIR)/TinyIntent.mlmodel || (echo "$(RED)Error: TinyIntent.mlmodel not created$(NC)" && exit 1)
 	@test -f $(ROUTER_DIR)/train_summary.json || (echo "$(RED)Error: train_summary.json not created$(NC)" && exit 1)
 	@echo "$(GREEN)✅ Router training and CoreML artifacts completed!$(NC)"
-	@echo "$(GREEN)  - SmallIntent.mlmodel (macOS target, ≤16MB)$(NC)"
+	@echo "$(GREEN)  - SmallIntent.mlmodel (high-capacity model, 70-85MB target)$(NC)"
 	@echo "$(GREEN)  - TinyIntent.mlmodel (mobile target, ≤5MB)$(NC)"
 	@echo "$(GREEN)  - train_summary.json (API endpoint data)$(NC)"
 

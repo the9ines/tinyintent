@@ -39,7 +39,7 @@ This document outlines the product requirements and implementation plan for Tiny
 - **Flow**: Dictate Text → HTTP Request → Speak Response
 
 ### 🧑‍🧬 Intent Router (CoreML)
-- **SmallIntent.mlmodel**: macOS model (≤16MB), ANE-accelerated
+- **SmallIntent.mlmodel**: macOS model (~70-85MB INT8 CoreML), ANE-accelerated, seq_len=128
 - **TinyIntent.mlmodel**: iOS model (≤5MB) – future milestone  
 - **Router Runner**: Swift CLI returning `gen|act` with confidence
 - **Fallback**: Heuristic classification if model fails

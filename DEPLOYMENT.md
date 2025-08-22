@@ -223,7 +223,7 @@ make promote         # Promote if evaluation passes criteria
 ```
 
 This produces versioned CoreML artifacts:
-- `router/SmallIntent.mlmodel` - macOS optimized (≤16MB)
+- `router/SmallIntent.mlmodel` - macOS optimized (~70-85MB INT8 CoreML)
 - `router/TinyIntent.mlmodel` - Mobile optimized (≤5MB)
 - `router/train_summary.json` - Training metadata and metrics
 
@@ -247,7 +247,7 @@ curl -H "X-TinyIntent-Secret: $TINYINTENT_SECRET" \
 ### Model Validation Gates
 
 The training pipeline includes automatic validation:
-- **Size constraints**: SmallIntent ≤16MB, TinyIntent ≤5MB
+- **Size constraints**: SmallIntent 50-100MB (target 70-85MB), TinyIntent ≤5MB
 - **Performance gates**: Minimum accuracy, F1 score thresholds
 - **Calibration quality**: ECE (Expected Calibration Error) limits
 - **Latency requirements**: P95 inference time under 50ms

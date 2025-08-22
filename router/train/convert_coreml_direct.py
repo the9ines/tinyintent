@@ -130,10 +130,13 @@ def convert_pytorch_to_coreml(model_path, output_path, quantize=True):
         size_mb = total_size / (1024 * 1024)
         logger.info(f"Core ML model size: {size_mb:.2f} MB")
         
-        if size_mb > 16:
-            logger.warning(f"Model size ({size_mb:.2f} MB) exceeds 16MB target!")
+        # Validate target size range (50-100 MB for higher-capacity model)
+        if size_mb < 50:
+            logger.warning(f"Model size ({size_mb:.2f} MB) below minimum target (50 MB)")
+        elif size_mb > 100:
+            logger.warning(f"Model size ({size_mb:.2f} MB) exceeds maximum target (100 MB)")
         else:
-            logger.info("✅ Model size meets 16MB constraint")
+            logger.info(f"✅ Model size: {size_mb:.2f} MB (target: 70-85 MB)")
     
     return coreml_model, size_mb
 
@@ -223,11 +226,11 @@ def create_optimized_model(model_path, output_path):
                 quantize=strategy["quantize"]
             )
             
-            if size_mb <= 16:
-                logger.info(f"✅ Success! Model size: {size_mb:.2f} MB")
+            if 50 <= size_mb <= 100:
+                logger.info(f"✅ Success! Model size: {size_mb:.2f} MB (within target range)")
                 return model, size_mb
             else:
-                logger.warning(f"Model too large: {size_mb:.2f} MB, trying next strategy...")
+                logger.warning(f"Model size {size_mb:.2f} MB outside target range (50-100MB), trying next strategy...")
                 # Remove the oversized model
                 if output_path.exists():
                     import shutil
@@ -237,7 +240,7 @@ def create_optimized_model(model_path, output_path):
             logger.error(f"Strategy {i+1} failed: {e}")
             continue
     
-    raise RuntimeError("All conversion strategies failed to create a model ≤16MB")
+    raise RuntimeError("All conversion strategies failed to create a valid model")
 
 def main():
     """Main conversion function"""
@@ -344,7 +347,7 @@ def main():
             metadata['coreml_models']['models'][model_name.lower()] = {
                 'path': str(model_path_obj),
                 'size_mb': model_size,
-                'meets_size_constraint': model_size <= (16 if model_name == 'SmallIntent' else 5),
+                'meets_size_constraint': (50 <= model_size <= 100) if model_name == 'SmallIntent' else model_size <= 5,
                 'target_platform': 'macOS' if model_name == 'SmallIntent' else 'iOS',
                 'created_at': timestamp,
                 'version': f"{timestamp.split('T')[0]}-{model_name.lower()}"
@@ -353,7 +356,7 @@ def main():
         # Legacy fields for backward compatibility
         metadata['coreml_path'] = str(small_model_path)
         metadata['coreml_size_mb'] = created_models[0][2]  # SmallIntent size
-        metadata['meets_size_constraint'] = created_models[0][2] <= 16
+        metadata['meets_size_constraint'] = 50 <= created_models[0][2] <= 100  # SmallIntent size range
         
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
@@ -391,9 +394,13 @@ def main():
         # Print summary
         logger.info("\nModel Summary:")
         for model_name, model_path_obj, model_size in created_models:
-            target_size = 16 if model_name == 'SmallIntent' else 5
-            status = "✅" if model_size <= target_size else "⚠️"
-            logger.info(f"  {status} {model_name}: {model_size:.2f} MB (target: ≤{target_size} MB)")
+            if model_name == 'SmallIntent':
+                target_desc = "50-100MB"
+                status = "✅" if 50 <= model_size <= 100 else "⚠️"
+            else:
+                target_desc = "≤5MB"
+                status = "✅" if model_size <= 5 else "⚠️"
+            logger.info(f"  {status} {model_name}: {model_size:.2f} MB (target: {target_desc})")
         
         return created_models
         
