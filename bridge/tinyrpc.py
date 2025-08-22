@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from tinyintent.config import settings
-from tinyintent.bridge.api_routes import router_api
+from tinyintent.bridge.api_main import router_api
 from tinyintent.bridge.gen_client import async_ollama_client
 from tinyintent.bridge.logs.audit import initialize_audit_logger, get_audit_logger
 from tinyintent.helpers.sdk import helper_registry

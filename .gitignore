@@ -1,9 +1,41 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# System files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Development files
 bridge/logs/
 *.log
+.env
+*.backup
+*.tmp
+*AUDIT*
+*ci_results*
+
+# TinyIntent specific
 router/*.mlmodel*
 *.mlmodelc
+data/episodes/*.db
+data/episodes/*.ndjson
 launchd/*.plist
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
