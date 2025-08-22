@@ -1,37 +1,76 @@
-📄 TinyIntent v2: Mac-First Local Intelligence Platform
-This document outlines the product requirements and implementation plan for TinyIntent v2, a Mac-first, local-only intelligence platform. The project's core purpose is to provide an on-device, private, and extensible AI agent for managing personal operations, starting with crypto bot risk management.
-Project Framing
-Platform: Mac-first via a macOS service/app. Initial iOS interaction uses a Shortcut; a native app is a future milestone.
-Inference: No cloud inference—local-only via Ollama.
-Router: Core ML model (ANE/NPU) used for intent classification.
-Repo: Single monorepo at /Users/oberfelder/projects/tinyintent
-Bridge: API service on port 8787 for LAN + Tailscale access.
-Capabilities
-🧑‍🧬 Intent Router (Core ML)
-SmallIntent for macOS (≤16MB), ANE-accelerated
-TinyIntent for iOS (≤5MB) – future milestone
-Router Runner: Lightweight Swift CLI returning gen|act with confidence. Fallback heuristic if model fails.
-Confidence calibration + abstain/fallback policies.
-Eval outputs include precision/recall/F1/confusion metrics and calibration curves.
-🧹 Pluggable Local LLM Roles
-models.yaml maps:
-small: llama3.1:8b-instruct-q5_K_M
-medium: qwen2.5:32b-instruct-q4_K_M
-large: llama3.1:70b-instruct-q4_K_M
-Overrides:
-Environment variables (MODEL_SMALL, etc.)
-Per-request LLM preference
-POST /admin/reload-models hot reloads model definitions
-make doctor provides readiness and missing models
-🌉 Bridge API Endpoints
-GET /healthz, GET /readyz – system status
-POST /route – routes text as gen, act, abstain
-POST /feedback – attaches result metadata
-POST /admin/reload-models – reloads models.yaml
-POST /admin/reload-helpers – hot reload helpers (M8.2)
-POST /emergency/kill – disables all execution until cleared
-GET /router/metrics – confidence/latency monitoring
-GET /router/train_summary – training stats
+# 📄 TinyIntent v2.0.0: Mac-First Local Intelligence Platform
+
+This document outlines the product requirements and implementation plan for TinyIntent v2.0.0, a streamlined, production-ready AI platform for voice-activated personal assistant tasks.
+
+## 🎯 Project Overview
+
+**Core Purpose**: Voice-first AI assistant that routes iPhone Siri commands to local AI models and executes actions through sandboxed helpers.
+
+**Key Innovation**: Seamless voice interaction via iPhone Shortcuts → Local CoreML routing → Sandboxed execution.
+
+## 📋 Project Structure
+
+```
+/Users/oberfelder/Projects/tinyintent/  # Production streamlined structure
+├── tinyintent/                         # Main CLI package  
+├── bridge/routes/                      # Modular FastAPI routes
+├── router/SmallIntent.mlmodel         # CoreML intent classifier
+├── helpers/{bot_guard,log_tailer}/    # Sandboxed task executors
+├── install.sh                         # One-command setup
+└── pyproject.toml                     # Python packaging
+```
+
+**Usage**: Simply run `tinyintent` command to start server and use iPhone voice shortcuts immediately.
+
+## 🚀 Platform Architecture
+
+- **Platform**: Mac-first with streamlined CLI (`tinyintent` command)
+- **iPhone Integration**: M11.0 Shortcut voice interface with optimized TTS
+- **Inference**: Local-only via Ollama + CoreML (no cloud calls)
+- **Router**: SmallIntent.mlmodel (CoreML, ANE-accelerated)
+- **Repository**: Single monorepo with production packaging
+- **Bridge**: FastAPI service on port 8787 (LAN + Tailscale ready)
+## 🧠 Core Capabilities
+
+### 📱 M11.0: iPhone Shortcut Voice Interface
+- **Endpoint**: `POST /shortcut/route` with `X-Shortcut-Token` auth
+- **Integration**: Seamless Siri voice command processing
+- **Features**: Voice-optimized text formatting, TTS optimization, length limits
+- **Flow**: Dictate Text → HTTP Request → Speak Response
+
+### 🧑‍🧬 Intent Router (CoreML)
+- **SmallIntent.mlmodel**: macOS model (≤16MB), ANE-accelerated
+- **TinyIntent.mlmodel**: iOS model (≤5MB) – future milestone  
+- **Router Runner**: Swift CLI returning `gen|act` with confidence
+- **Fallback**: Heuristic classification if model fails
+- **Performance**: Sub-10ms inference on Apple Silicon
+
+### 🧹 Pluggable Local LLM Integration
+**models.yaml configuration**:
+- `small`: llama3.1:8b-instruct-q5_K_M
+- `medium`: qwen2.5:32b-instruct-q4_K_M  
+- `large`: llama3.1:70b-instruct-q4_K_M
+
+**Overrides**:
+- Environment variables (MODEL_SMALL, etc.)
+- Per-request LLM preference
+- `POST /admin/reload-models` hot reloads definitions
+- `make doctor` provides readiness status
+
+### 🌉 Modular Bridge API
+**Health & Status**:
+- `GET /health` - System status
+- `GET /shortcut/ping` - iPhone Shortcut health check
+
+**Core Routing**:
+- `POST /route` - Routes text as gen, act, abstain  
+- `POST /feedback` - Attaches result metadata
+
+**Management**:
+- `POST /admin/reload-models` - Hot reload models.yaml
+- `POST /admin/reload-helpers` - Hot reload helpers (M8.2)
+- `POST /emergency/kill` - Emergency disable execution
+- `GET /router/metrics` - Confidence/latency monitoring
 🛠 Helpers Orchestrator
 Reflection Layer: Uses a small LLM to sanity-check helper previews (planned).
 Sandboxing:

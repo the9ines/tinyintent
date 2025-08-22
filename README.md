@@ -1,137 +1,203 @@
-# TinyIntent v2
+# 🎯 TinyIntent v2.0.0 - Voice-Activated AI Assistant
 
-A Mac-first, local-only AI platform for routing and executing personal assistant tasks—like managing crypto bots—using CoreML, Ollama, and sandboxed helpers.
+A streamlined, production-ready AI platform that connects your iPhone to local AI models via voice commands.
 
-## 🚀 Quick Start
+## ⚡ Quick Start
 
 ```bash
-# Setup the environment
-make setup
+# Install TinyIntent (one-time setup)
+./install.sh
 
-# Start the bridge service
-make bridgesrv
+# Start TinyIntent server
+tinyintent
 
-# Train the intent router
-make router-train
+# Your server is now running at http://YOUR_IP:8787
+# Ready for iPhone voice shortcuts!
+```
 
-# Run health checks
-make doctor
+## 📱 iPhone Voice Setup
+
+1. **Open Shortcuts app** on your iPhone
+2. **Create new shortcut** with these actions:
+   - **Dictate Text** (Stop Listening: After Pause)
+   - **Get Contents of URL**:
+     - URL: `http://YOUR_IP:8787/shortcut/route`
+     - Method: POST
+     - Headers: `X-Shortcut-Token: tinyintent-shortcut-token-123`
+     - JSON Body: `{"text": "[Dictated Text]", "return_format": "text"}`
+   - **Get Text from Contents of URL** (extract `speak` field)
+   - **Speak Text**
+
+3. **Test**: Say *"Show me system logs"* and hear the response!
+
+## 🎯 Simple Commands
+
+```bash
+tinyintent              # Start server (default: port 8787)
+tinyintent --port 9000  # Start on custom port
+tinyintent status       # Show system status
+tinyintent --help       # Show all options
 ```
 
 ## 📁 Project Structure
 
 ```
 tinyintent/
-├── bridge/          # FastAPI service for routing
-├── router/          # Intent classification (gen vs act)
-├── helpers/         # Sandboxed task execution
-├── data/            # Episodes and training datasets
-├── scripts/         # Utility scripts
-├── tests/           # Smoke tests and validation
-└── launchd/         # macOS service configuration
+├── tinyintent/           # Main CLI package
+│   ├── cli.py           # Streamlined CLI entry point
+│   ├── config.py        # Configuration management
+│   └── simple_server.py # Fallback server
+├── bridge/              # FastAPI service core
+│   ├── routes/          # Modular route organization
+│   │   ├── shortcut.py  # iPhone Shortcut API (M11.0)
+│   │   ├── health.py    # Health check endpoints
+│   │   ├── helpers.py   # Helper management
+│   │   ├── agents.py    # Agent lifecycle
+│   │   └── system.py    # System operations
+│   ├── tinyrpc.py       # Main FastAPI app
+│   ├── security.py      # Authentication & authorization
+│   └── provenance.py    # Agent signing & tamper detection
+├── router/              # SmallIntent.mlmodel routing
+│   ├── SmallIntent.mlmodel  # CoreML intent classifier
+│   ├── train_router.swift  # Model training
+│   └── data/            # Training datasets
+├── helpers/             # Sandboxed task execution
+│   ├── bot_guard/       # Crypto trading helper
+│   ├── log_tailer/      # System log analysis
+│   ├── registry.py      # Helper discovery
+│   └── executor.py      # Sandboxed execution
+├── data/episodes/       # Episode logging & storage
+├── tests/               # Comprehensive test suites
+├── scripts/             # Utility & automation scripts
+├── docs/                # Documentation
+├── install.sh           # One-command installation
+└── pyproject.toml       # Python packaging
 ```
+
+## 🚀 Key Features
+
+- 🧠 **SmallIntent.mlmodel** - Local CoreML intent routing
+- 📱 **iPhone Shortcut Integration** - Voice commands via Siri  
+- 🔒 **Security Framework** - Authentication, sandboxing, audit logging
+- 🤖 **Helper System** - Extensible action execution
+- 📊 **System Monitoring** - Health checks and metrics
+- 🌐 **Tailscale Ready** - Works anywhere with secure networking
 
 ## 🎯 Core Components
 
-### Bridge Service
-- **Port**: 8787
-- **Auth**: `X-TinyIntent-Secret` header
-- **Endpoints**: `/route`, `/feedback`, `/readyz`
+### 📱 iPhone Shortcut API (M11.0)
+- **Endpoint**: `/shortcut/route`
+- **Auth**: `X-Shortcut-Token` header
+- **Features**: Voice-optimized text formatting, TTS optimization
+- **Integration**: Seamless Siri voice command processing
 
-### Router
-- **Models**: 
-  - `SmallIntent.mlmodel` (macOS, ≤16MB)
-  - `TinyIntent.mlmodel` (mobile, ≤5MB)
-- **Classes**: `gen` (generative) vs `act` (action)
-- **Training**: Python + transformers → ONNX → CoreML
-- **Pipeline**: `make learn` produces versioned CoreML artifacts
+### 🧠 SmallIntent Router  
+- **Model**: `SmallIntent.mlmodel` (CoreML, runs on Neural Engine)
+- **Classification**: `gen` (generative) vs `act` (action execution)
+- **Training**: Swift + CreateML → CoreML artifacts
+- **Performance**: Sub-10ms inference on Apple Silicon
 
-### Helpers
-- **Runtime**: Node.js sandboxed execution
-- **Schema**: JSON schema validation
-- **Registry**: YAML-based helper discovery
+### 🤖 Helper Framework
+- **Runtime**: Node.js sandboxed execution with capability isolation
+- **Security**: CPU/memory limits, filesystem restrictions, network controls
+- **Registry**: YAML-based discovery with lifecycle management
+- **Available Helpers**:
+  - `bot_guard` - Crypto trading position management
+  - `log_tailer` - System log analysis and monitoring
 
-## 🧪 Testing
+## 📋 Voice Commands
+
+Try saying these to your iPhone:
+
+- *"Show me recent error logs"*
+- *"Check system health"*
+- *"What's my server status?"*
+- *"Get my trading positions"*
+
+## 🧪 Testing & Development
 
 ```bash
-# Run all tests
+# Run comprehensive test suite
 make test
 
 # Individual test suites
-./tests/health.sh        # Project structure
-./tests/auth.sh          # Authentication
-./tests/routes.smoke.sh  # API endpoints
-./tests/router_smoke.sh  # Model training
-./tests/helpers_smoke.sh # Helper framework
+./tests/health.sh         # System health checks
+./tests/auth.sh           # Authentication testing
+./tests/routes.smoke.sh   # API endpoint validation
+./tests/router_smoke.sh   # Router model testing
+./tests/helpers_smoke.sh  # Helper framework testing
+
+# Advanced commands
+tinyintent --reload       # Development mode with auto-reload
+make doctor              # System diagnostic report
+make router-train        # Train new intent classification model
 ```
 
-## 🤖 Model Training & Deployment
+## 🔧 Configuration
 
-### Generate and Deploy CoreML Models
+Environment variables (auto-configured with defaults):
 
 ```bash
-# Full learning pipeline: export episodes → train → evaluate
-make learn
-
-# Individual steps
-make router-train    # Train and produce SmallIntent.mlmodel + TinyIntent.mlmodel
-make router-eval     # Evaluate models with precision/recall metrics
-make promote         # Promote model to active use if criteria met
+TINYINTENT_PORT=8787                              # Server port
+SHORTCUT_TOKEN=tinyintent-shortcut-token-123      # iPhone auth token
+TINYINTENT_EXECUTION_ENABLED=1                    # Enable helper execution
+TINYINTENT_SECRET=your-secret-here                # API authentication
 ```
 
-### Check Training Status
+## 📚 API Documentation
 
-```bash
-# Check model and training status via API
-curl -H "X-TinyIntent-Secret: $TINYINTENT_SECRET" \
-  http://localhost:8787/router/train_summary
+- `GET /health` - Health check
+- `GET /shortcut/ping` - iPhone Shortcut health check
+- `POST /shortcut/route` - Voice command routing
+- `GET /docs` - Interactive API documentation
+- `GET /helpers` - Available helpers list
+- `POST /helpers/{id}/preview` - Helper preview mode
 
-# Or run system health check
-make doctor
+## 🔐 Security & Privacy
+
+- 🔒 **Local-First**: All inference runs locally (no cloud calls)
+- 🛡️ **Sandboxed Execution**: Helpers run in isolated environments with CPU/memory limits
+- 🔑 **Multi-Layer Auth**: Token-based authentication for iPhone + API secret for advanced access
+- 📋 **Audit Logging**: Full request/response/error logging with tamper detection
+- 🚦 **Lifecycle Gates**: Agent staging, approval workflows, and emergency kill switches
+- 🔐 **Provenance Tracking**: Cryptographic signing and tamper-evidence for all agents
+
+## 🧠 System Architecture
+
+```
+iPhone (Siri) → Shortcuts → TinyIntent Bridge → SmallIntent.mlmodel → Helpers → Response
 ```
 
-The `/router/train_summary` endpoint returns:
-- Training metrics (accuracy, precision/recall, F1 scores)
-- Model artifacts status (SmallIntent.mlmodel, TinyIntent.mlmodel)
-- Calibration curves and confidence statistics
-- Deployment readiness status
+## 🔍 Troubleshooting
 
-## 🔐 Security
+**"Command not found"**: Run `./install.sh` first  
+**"Connection refused"**: Check firewall and network settings  
+**"Invalid token"**: Verify `X-Shortcut-Token` header matches configuration  
+**"Module not found"**: Ensure you're in the TinyIntent project directory
 
-- All inference runs locally (no cloud calls)
-- Helpers execute in sandboxed environments
-- Critical actions require two-step approval
-- Full audit logging for all actions
+## 📚 Documentation
 
-## 📚 Key Files
-
-- `Makefile` - Build targets and automation
-- `models.yaml` - Ollama model configuration
+- `README_STREAMLINED.md` - Quick start guide
+- `docs/iOS_SHORTCUTS.md` - iPhone Shortcut setup
+- `PRD.md` - Complete product requirements
 - `CLAUDE.md` - AI assistant context
-- `PRD.md` - Product requirements document
 
-## 🛠️ Development
+## 🛠️ Advanced Operations
 
 ```bash
-# Check system health
+# System diagnostics
 make doctor
 
-# Rotate API secret
-./scripts/rotate_secret.sh
+# Security operations  
+./scripts/rotate_secret.sh      # Rotate API secret
+./scripts/print_urls_and_secret.sh  # Show current config
 
-# Export episode data
-./scripts/export_episodes.sh
-
-# Print service URLs
-./scripts/print_urls_and_secret.sh
+# Data management
+./scripts/export_episodes.sh    # Export training data
 ```
-
-## 📊 Monitoring
-
-- **Logs**: `bridge/logs/`
-- **Episodes**: `data/episodes/events.ndjson`
-- **Health**: `bridge/selfheal.py`
 
 ---
+
+**TinyIntent v2.0.0** - Built with ❤️ for voice-first AI interaction
 
 **Note**: This is a local-first platform. No data leaves your Mac.
