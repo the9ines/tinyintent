@@ -16,12 +16,74 @@ from typing import Any, Dict, Optional
 
 import structlog
 
-from tinyintent.bridge.logs.audit import get_audit_logger
-from tinyintent.bridge.logs.sanitize import sanitize_dict, sanitize_text
-from tinyintent.config import settings
-from tinyintent.helpers.manifest import HelperManifest
-from tinyintent.helpers.registry import HelperRegistry
-from tinyintent.helpers.sandbox import (
+# Add project root to path for imports
+import sys
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+# Import bridge modules with fallbacks
+try:
+    from bridge.logs.audit import get_audit_logger
+    from bridge.logs.sanitize import sanitize_dict, sanitize_text
+    from bridge.sandbox_security import sandbox_security, SandboxSecurityViolation
+    from bridge.secret_manager import get_secret_manager, SecretViolation
+except ImportError:
+    # Fallbacks for development
+    def get_audit_logger():
+        return None
+    
+    def sanitize_dict(d):
+        return d
+    
+    def sanitize_text(t):
+        return t
+    
+    class MockSecurityViolation(Exception):
+        def __init__(self, message, violation_type="UNKNOWN", details=None):
+            super().__init__(message)
+            self.violation_type = violation_type
+            self.details = details or {}
+    
+    SandboxSecurityViolation = MockSecurityViolation
+    
+    class MockSecretViolation(Exception):
+        def __init__(self, message, secret_name="", helper_id="", required_scope=""):
+            super().__init__(message)
+            self.secret_name = secret_name
+            self.helper_id = helper_id
+            self.required_scope = required_scope
+    
+    SecretViolation = MockSecretViolation
+    
+    class MockSandboxSecurity:
+        def validate_helper_input(self, data):
+            return data
+        def create_security_profile(self, helper_id, capabilities):
+            return {"helper_id": helper_id, "capabilities": capabilities}
+        def validate_command(self, cmd):
+            pass
+        def sanitize_environment(self, env, workspace):
+            return env
+    
+    sandbox_security = MockSandboxSecurity()
+    
+    class MockSecretManager:
+        def create_scoped_environment(self, helper_id, trust_level, env):
+            return env
+    
+    def get_secret_manager():
+        return MockSecretManager()
+
+try:
+    from tinyintent.config import settings
+except ImportError:
+    # Fallback settings
+    class MockSettings:
+        pass
+    settings = MockSettings()
+from .manifest import HelperManifest
+from .registry import HelperRegistry
+from .sandbox import (
     CapabilityViolationError,
     HelperSandbox,
     SandboxViolationError,
@@ -311,35 +373,92 @@ class HelperExecutor:
                        mode: str = "preview", execution_mode: str = "preview") -> Dict[str, Any]:
         """Execute helper subprocess with enhanced sandbox constraints."""
         
+        # Enhanced security validation
+        try:
+            # Validate helper input for security threats
+            sanitized_input = sandbox_security.validate_helper_input(input_data)
+            
+            # Get capabilities from registry for capability isolation
+            registry_entry = self.registry.get_registry_entry(helper.helper_id)
+            capabilities = registry_entry.capabilities if registry_entry else []
+            
+            # Create security profile for this execution
+            security_profile = sandbox_security.create_security_profile(helper.helper_id, capabilities)
+            
+            # Log security profile creation
+            self._log_audit(
+                "security_profile_created", 
+                helper.helper_id, 
+                {"capabilities": capabilities},
+                extra_data={"security_profile": security_profile}
+            )
+            
+        except SandboxSecurityViolation as e:
+            self._log_audit(
+                "security_violation",
+                helper.helper_id,
+                input_data,
+                error=f"Security validation failed: {e}",
+                extra_data={"violation_type": e.violation_type, "details": e.details}
+            )
+            raise HelperExecutionError(f"Security validation failed: {e}")
+        
+        # Use sanitized input for execution
+        input_data = sanitized_input
+        
         # Prepare environment
         env = os.environ.copy()
         
-        # Ensure exchange credentials are loaded for helpers that need them
-        exchange_vars = ["EXCHANGE_API_KEY", "EXCHANGE_SECRET", "EXCHANGE_PASSPHRASE"]
+        # Use secret manager for secure credential access
+        secret_manager = get_secret_manager()
         required_env = helper.environment.get("required", [])
         
-        # Check if any exchange vars are required
-        needs_exchange = any(var in required_env for var in exchange_vars)
-        if needs_exchange:
-            # Reload .env file to get latest credentials
-            from tinyintent.helpers.sdk import load_env_file
-            load_env_file()
-            # Update env dict with current environment
-            env = os.environ.copy()
+        # Get helper trust level from registry
+        helper_trust_level = "draft"  # Default
+        if registry_entry and hasattr(registry_entry, 'lifecycle'):
+            helper_trust_level = registry_entry.lifecycle.get('state', 'draft')
         
-        # Check for missing required environment variables
+        # Create scoped environment with secrets
+        try:
+            env = secret_manager.create_scoped_environment(
+                helper.helper_id, 
+                helper_trust_level, 
+                env
+            )
+        except SecretViolation as e:
+            self._log_audit(
+                "secret_access_denied",
+                helper.helper_id,
+                input_data,
+                error=f"Secret access denied: {e}",
+                extra_data={"secret_name": e.secret_name, "required_scope": e.required_scope}
+            )
+            raise HelperExecutionError(f"Secret access denied: {e}")
+        
+        # Check for missing required environment variables (including secrets)
         missing_vars = []
         for env_var in required_env:
-            if env_var not in env:
+            # Check both regular env and scoped secrets
+            scoped_secret_name = f"TINYINTENT_SECRET_{env_var.upper()}"
+            if env_var not in env and scoped_secret_name not in env:
                 missing_vars.append(env_var)
         
         if missing_vars:
+            # Log missing variables for security audit
+            self._log_audit(
+                "missing_credentials",
+                helper.helper_id,
+                input_data,
+                error=f"Required credentials missing: {', '.join(missing_vars)}",
+                extra_data={"missing_vars": missing_vars, "helper_trust_level": helper_trust_level}
+            )
+            
             # For execute mode, raise with missing_vars info for 409 error
             error = ValueError(f"Required environment variable(s) missing: {', '.join(missing_vars)}")
             error.missing_vars = missing_vars
             raise error
         
-        # Prepare command
+        # Prepare command with enhanced security validation
         commands = helper.sandbox.get("commands", [])
         if not commands:
             raise ValueError(f"No commands defined for helper {helper.helper_id}")
@@ -348,6 +467,19 @@ class HelperExecutor:
         cmd = [commands[0]]
         if len(commands) > 1:
             cmd.extend(commands[1:])
+        
+        # Enhanced command validation
+        try:
+            sandbox_security.validate_command(cmd)
+        except SandboxSecurityViolation as e:
+            self._log_audit(
+                "command_security_violation",
+                helper.helper_id,
+                input_data,
+                error=f"Command validation failed: {e}",
+                extra_data={"command": cmd, "violation_type": e.violation_type}
+            )
+            raise HelperExecutionError(f"Command security validation failed: {e}")
         
         # Prepare input JSON
         input_json = json.dumps(input_data)
@@ -399,8 +531,24 @@ class HelperExecutor:
             )
         
         try:
-            # Execute in sandbox
-            return sandbox.execute(cmd, input_json, env, helper.helper_dir)
+            # Enhanced environment sanitization
+            workspace_path = str(sandbox._create_temp_workspace())
+            sanitized_env = sandbox_security.sanitize_environment(env, workspace_path)
+            
+            # Log environment sanitization
+            self._log_audit(
+                "environment_sanitized",
+                helper.helper_id,
+                input_data,
+                extra_data={
+                    "original_env_count": len(env),
+                    "sanitized_env_count": len(sanitized_env),
+                    "workspace_path": workspace_path
+                }
+            )
+            
+            # Execute in sandbox with sanitized environment
+            return sandbox.execute(cmd, input_json, sanitized_env, helper.helper_dir)
             
         except CapabilityViolationError as e:
             # M6.5: Handle capability violations

@@ -382,7 +382,9 @@ class HelperRegistry:
             # Summary
             valid_helpers = len([h for h in self.registry_entries.values() if h.is_valid])
             total_helpers = len(self.registry_entries)
-            print(f"Loaded {valid_helpers}/{total_helpers} helpers ({len(self.helpers)} with manifests)")
+            # Only log helper loading in debug mode
+            if os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower() in ["debug", "info"]:
+                print(f"Loaded {valid_helpers}/{total_helpers} helpers ({len(self.helpers)} with manifests)")
             
             # Log any validation failures
             invalid_helpers = [h for h in self.registry_entries.values() if not h.is_valid]
