@@ -12,6 +12,13 @@ from typing import Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# Import centralized sanitization
+try:
+    from sanitize import sanitize_dict, sanitize_text
+    CENTRALIZED_SANITIZATION = True
+except ImportError:
+    CENTRALIZED_SANITIZATION = False
+
 
 class ApprovalTokenManager:
     """Manages approval tokens for guarded helper execution."""
@@ -245,6 +252,10 @@ class ApprovalTokenManager:
                 "token_partial": token_partial,
                 "token_count": len(self.tokens)
             }
+            
+            # Sanitize log entry before writing
+            if CENTRALIZED_SANITIZATION:
+                log_entry = sanitize_dict(log_entry)
             
             with open(self.audit_log, 'a') as f:
                 f.write(json.dumps(log_entry) + '\n')

@@ -477,11 +477,24 @@ class AgentStagingStorage:
                 )
             """)
             
+            # M10.7: Agent daily quota counters table for persistence
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS agent_daily_counters (
+                    helper_id TEXT NOT NULL,
+                    date TEXT NOT NULL,  -- YYYY-MM-DD format
+                    counter_type TEXT NOT NULL,  -- 'execute' or 'preview' 
+                    count INTEGER DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (helper_id, date, counter_type)
+                )
+            """)
+            
             # Create indices for performance
             conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_helper_ts ON agent_shadow_runs(helper_id, ts)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_canary_helper_ts ON agent_canary_runs(helper_id, ts)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_input_hash ON agent_shadow_runs(input_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_canary_input_hash ON agent_canary_runs(input_hash)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_counters_helper_date ON agent_daily_counters(helper_id, date)")
             
             conn.commit()
     
@@ -675,6 +688,119 @@ class AgentStagingStorage:
         # Convert variance to score (1.0 = perfectly deterministic)
         avg_variance = total_variance / input_count
         return max(0.0, 1.0 - (avg_variance / 10000))  # Scale factor for size variance
+    
+    # M10.7: Agent Daily Quota Counter Management
+    def increment_daily_counter(self, helper_id: str, counter_type: str, date: str = None) -> int:
+        """
+        Increment daily counter for a helper and return new count.
+        
+        Args:
+            helper_id: Helper identifier
+            counter_type: 'execute' or 'preview'
+            date: Date in YYYY-MM-DD format (defaults to today)
+        
+        Returns:
+            New counter value
+        """
+        if date is None:
+            date = datetime.now().strftime("%Y-%m-%d")
+        
+        with self._lock:
+            with sqlite3.connect(self.db_path) as conn:
+                # Use INSERT OR REPLACE to handle upsert
+                conn.execute("""
+                    INSERT OR REPLACE INTO agent_daily_counters 
+                    (helper_id, date, counter_type, count, last_updated)
+                    VALUES (?, ?, ?, 
+                        COALESCE((SELECT count FROM agent_daily_counters 
+                                 WHERE helper_id = ? AND date = ? AND counter_type = ?), 0) + 1,
+                        CURRENT_TIMESTAMP)
+                """, (helper_id, date, counter_type, helper_id, date, counter_type))
+                
+                # Get the new count
+                cursor = conn.execute("""
+                    SELECT count FROM agent_daily_counters 
+                    WHERE helper_id = ? AND date = ? AND counter_type = ?
+                """, (helper_id, date, counter_type))
+                
+                result = cursor.fetchone()
+                new_count = result[0] if result else 1
+                conn.commit()
+                return new_count
+    
+    def get_daily_counter(self, helper_id: str, counter_type: str, date: str = None) -> int:
+        """
+        Get current daily counter value for a helper.
+        
+        Args:
+            helper_id: Helper identifier
+            counter_type: 'execute' or 'preview'
+            date: Date in YYYY-MM-DD format (defaults to today)
+            
+        Returns:
+            Current counter value
+        """
+        if date is None:
+            date = datetime.now().strftime("%Y-%m-%d")
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT count FROM agent_daily_counters 
+                WHERE helper_id = ? AND date = ? AND counter_type = ?
+            """, (helper_id, date, counter_type))
+            
+            result = cursor.fetchone()
+            return result[0] if result else 0
+    
+    def get_daily_counters_for_helper(self, helper_id: str, days: int = 7) -> Dict[str, Dict[str, int]]:
+        """
+        Get daily counters for a helper over the past N days.
+        
+        Args:
+            helper_id: Helper identifier
+            days: Number of days to look back
+            
+        Returns:
+            Dictionary mapping date -> {counter_type -> count}
+        """
+        cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT date, counter_type, count 
+                FROM agent_daily_counters 
+                WHERE helper_id = ? AND date >= ?
+                ORDER BY date, counter_type
+            """, (helper_id, cutoff_date))
+            
+            results = {}
+            for row in cursor:
+                date = row["date"]
+                if date not in results:
+                    results[date] = {}
+                results[date][row["counter_type"]] = row["count"]
+            
+            return results
+    
+    def cleanup_old_daily_counters(self, days_to_keep: int = 30):
+        """
+        Clean up daily counters older than specified days.
+        
+        Args:
+            days_to_keep: Number of days of counters to retain
+        """
+        cutoff_date = (datetime.now() - timedelta(days=days_to_keep)).strftime("%Y-%m-%d")
+        
+        with self._lock:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    DELETE FROM agent_daily_counters WHERE date < ?
+                """, (cutoff_date,))
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                return deleted_count
     
     async def log_shadow_run_async(self, helper_id: str, session_id: str, helper_input: Dict[str, Any], 
                                    intent: Optional[str], latency_ms: int, success: bool, 

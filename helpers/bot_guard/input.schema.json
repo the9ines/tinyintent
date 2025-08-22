@@ -13,6 +13,7 @@
         "get_positions",
         "get_balance",
         "set_stop_loss",
+        "set_take_profit",
         "cancel_orders"
       ],
       "description": "The operation to perform"
@@ -47,6 +48,11 @@
       "minimum": 0,
       "description": "Stop loss price level"
     },
+    "take_profit_price": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Take profit price level"
+    },
     "emergency_code": {
       "type": "string",
       "pattern": "^[0-9]{3}-[A-Z]{3}-[0-9]{2}$",
@@ -69,7 +75,7 @@
       "if": {
         "properties": {
           "operation": {
-            "enum": ["close_position", "set_stop_loss"]
+            "enum": ["close_position", "set_stop_loss", "set_take_profit"]
           }
         }
       },

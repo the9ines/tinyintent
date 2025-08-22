@@ -1,0 +1,31 @@
+text,label
+"Write me a summary of this document",gen
+"Close my bot position on ETH immediately",act
+"Generate a blog post about crypto trading",gen
+"Emergency stop all trading bots now",act
+"Explain how market making works",gen
+"Restart the trading bot on the VPS",act
+"Create a technical analysis report",gen
+"Check the current bot positions",act
+"Tell me about DeFi protocols",gen
+"Close all open positions right now",act
+"Write documentation for this API",gen
+"Tail the error logs from the server",act
+"Generate a poem about blockchain",gen
+"Cancel all pending orders",act
+"What are the risks of leverage trading",gen
+"Get account balance from exchange",act
+"Create marketing copy for our product",gen
+"Set stop loss at 5% for BTC position",act
+"Explain smart contract security",gen
+"SSH into the server and restart nginx",act
+"Draft an email to the development team",gen
+"Monitor CPU usage on the trading server",act
+"Generate creative content about NFTs",gen
+"Emergency close position due to liquidation risk",act
+"Write a tutorial on yield farming",gen
+"Backup the trading bot configuration",act
+"Compose a response to this customer inquiry",gen
+"Execute the risk management protocol",act
+"Create a presentation about our trading strategy",gen
+"Deploy the latest bot update to production",act

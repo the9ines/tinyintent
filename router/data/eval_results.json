@@ -1,0 +1,160 @@
+{
+  "timestamp": "2025-08-20T23:36:57.154708",
+  "model_path": "/Users/oberfelder/Projects/tinyintent/router/SmallIntent.mlmodel",
+  "test_data_path": "/Users/oberfelder/Projects/tinyintent/router/data/intents_test.tsv",
+  "test_sample_count": 22,
+  "label_map": {
+    "gen": 0,
+    "act": 1
+  },
+  "performance": {
+    "accuracy": 0.7727272727272727,
+    "precision_macro": 0.8529411764705883,
+    "recall_macro": 0.75,
+    "f1_macro": 0.7471264367816092,
+    "per_class_metrics": {
+      "gen": {
+        "precision": 0.7058823529411765,
+        "recall": 1.0,
+        "f1": 0.8275862068965517,
+        "support": 12
+      },
+      "act": {
+        "precision": 1.0,
+        "recall": 0.5,
+        "f1": 0.6666666666666666,
+        "support": 10
+      }
+    },
+    "confusion_matrix": {
+      "true_negatives": 12,
+      "false_positives": 0,
+      "false_negatives": 5,
+      "true_positives": 5
+    },
+    "roc_auc": 0.125,
+    "pr_auc": 0.3167912389468117,
+    "latency": {
+      "mean_ms": 1.0580799796364524,
+      "p95_ms": 1.211857795715332,
+      "max_ms": 2.9981136322021484,
+      "std_ms": 0.4320422387270333
+    },
+    "calibration": {
+      "ece": 0.23846342346884986,
+      "reliability_diagram": {
+        "fraction_of_positives": [
+          0.45454545454545453
+        ],
+        "mean_predicted_value": [
+          0.5342638086188923
+        ]
+      },
+      "calibration_bins": [
+        {
+          "bin_lower": 0.0,
+          "bin_upper": 0.1,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.1,
+          "bin_upper": 0.2,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.2,
+          "bin_upper": 0.30000000000000004,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.30000000000000004,
+          "bin_upper": 0.4,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.4,
+          "bin_upper": 0.5,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.5,
+          "bin_upper": 0.6000000000000001,
+          "bin_accuracy": 0.7727272727272727,
+          "bin_confidence": 0.5342638492584229,
+          "bin_count": 22,
+          "proportion": 1.0
+        },
+        {
+          "bin_lower": 0.6000000000000001,
+          "bin_upper": 0.7000000000000001,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.7000000000000001,
+          "bin_upper": 0.8,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.8,
+          "bin_upper": 0.9,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        },
+        {
+          "bin_lower": 0.9,
+          "bin_upper": 1.0,
+          "bin_accuracy": 0.0,
+          "bin_confidence": 0.0,
+          "bin_count": 0,
+          "proportion": 0.0
+        }
+      ],
+      "mean_confidence": 0.5342638492584229,
+      "confidence_std": 0.02251633256673813
+    },
+    "sample_count": 22
+  },
+  "promotion": {
+    "promotion_eligible": false,
+    "checks": {
+      "accuracy_check": false,
+      "latency_check": true,
+      "calibration_check": false,
+      "f1_check": false
+    },
+    "thresholds": {
+      "min_accuracy": 0.85,
+      "max_latency_p95": 50.0,
+      "max_ece": 0.15,
+      "min_f1": 0.8
+    },
+    "summary": "Model FAILS promotion criteria"
+  },
+  "model_info": {
+    "size_mb": 0.0,
+    "architecture": "transformer_classification_coreml"
+  }
+}

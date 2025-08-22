@@ -57,20 +57,31 @@ health: ## Show basic model/hardware readiness (quick check)
 	@test -f models.yaml && cat models.yaml || echo "  ❌ models.yaml missing"
 
 ##@ Router (M3)
-router-train: ## Train the SmallIntent model
+router-train: ## Train the SmallIntent model and produce CoreML artifacts
 	@echo "$(GREEN)Training SmallIntent Router Model...$(NC)"
 	@echo "==================================="
 	@test -f $(ROUTER_DIR)/data/intents.tsv || (echo "$(RED)Error: Training data not found at $(ROUTER_DIR)/data/intents.tsv$(NC)" && exit 1)
-	@cd $(PROJECT_ROOT) && chmod +x $(ROUTER_DIR)/train_router.swift
-	@cd $(PROJECT_ROOT) && $(SWIFT) $(ROUTER_DIR)/train_router.swift
-	@echo "$(GREEN)✅ Router training completed!$(NC)"
+	@echo "$(YELLOW)Step 1: Training PyTorch model...$(NC)"
+	@cd $(PROJECT_ROOT) && $(PYTHON) $(ROUTER_DIR)/train/train.py
+	@echo "$(YELLOW)Step 2: Exporting to ONNX...$(NC)"
+	@cd $(PROJECT_ROOT) && $(PYTHON) $(ROUTER_DIR)/train/export_onnx.py
+	@echo "$(YELLOW)Step 3: Converting to CoreML (SmallIntent.mlmodel + TinyIntent.mlmodel)...$(NC)"
+	@cd $(PROJECT_ROOT) && $(PYTHON) $(ROUTER_DIR)/train/convert_coreml_direct.py
+	@echo "$(YELLOW)Step 4: Validating model artifacts...$(NC)"
+	@test -f $(ROUTER_DIR)/SmallIntent.mlmodel || (echo "$(RED)Error: SmallIntent.mlmodel not created$(NC)" && exit 1)
+	@test -f $(ROUTER_DIR)/TinyIntent.mlmodel || (echo "$(RED)Error: TinyIntent.mlmodel not created$(NC)" && exit 1)
+	@test -f $(ROUTER_DIR)/train_summary.json || (echo "$(RED)Error: train_summary.json not created$(NC)" && exit 1)
+	@echo "$(GREEN)✅ Router training and CoreML artifacts completed!$(NC)"
+	@echo "$(GREEN)  - SmallIntent.mlmodel (macOS target, ≤16MB)$(NC)"
+	@echo "$(GREEN)  - TinyIntent.mlmodel (mobile target, ≤5MB)$(NC)"
+	@echo "$(GREEN)  - train_summary.json (API endpoint data)$(NC)"
 
 router-eval: ## Evaluate the trained router model
 	@echo "$(GREEN)Evaluating SmallIntent Router Model...$(NC)"
 	@echo "====================================="
 	@test -f $(ROUTER_DIR)/SmallIntent.mlmodel || (echo "$(RED)Error: Model not found. Run 'make router-train' first.$(NC)" && exit 1)
-	@cd $(PROJECT_ROOT) && chmod +x $(ROUTER_DIR)/eval_router.swift
-	@cd $(PROJECT_ROOT) && $(SWIFT) $(ROUTER_DIR)/eval_router.swift
+	@echo "$(YELLOW)Running CoreML model evaluation...$(NC)"
+	@cd $(PROJECT_ROOT) && $(PYTHON) $(ROUTER_DIR)/eval_router.py
 	@echo "$(GREEN)✅ Router evaluation completed!$(NC)"
 
 router-clean: ## Clean router build artifacts
@@ -80,19 +91,26 @@ router-clean: ## Clean router build artifacts
 	@echo "$(GREEN)✅ Router artifacts cleaned$(NC)"
 
 ##@ Learning Loop (M5.3)
-learn: ## Automated learning loop: export episodes → train → evaluate
+learn: ## Automated learning loop: export episodes → train → evaluate → validate artifacts
 	@echo "$(GREEN)Starting TinyIntent Learning Loop...$(NC)"
 	@echo "=================================="
 	@echo "$(YELLOW)Step 1: Exporting episodes to training data...$(NC)"
 	@$(PYTHON) scripts/export_episodes.py
 	@echo ""
-	@echo "$(YELLOW)Step 2: Training router model...$(NC)"
+	@echo "$(YELLOW)Step 2: Training router model and producing CoreML artifacts...$(NC)"
 	@$(MAKE) router-train
 	@echo ""
 	@echo "$(YELLOW)Step 3: Evaluating trained model...$(NC)"
 	@$(MAKE) router-eval
 	@echo ""
-	@echo "$(GREEN)✅ Learning loop completed!$(NC)"
+	@echo "$(YELLOW)Step 4: Validating complete learning pipeline...$(NC)"
+	@test -f $(ROUTER_DIR)/SmallIntent.mlmodel && echo "  ✅ SmallIntent.mlmodel ready" || echo "  ❌ SmallIntent.mlmodel missing"
+	@test -f $(ROUTER_DIR)/TinyIntent.mlmodel && echo "  ✅ TinyIntent.mlmodel ready" || echo "  ❌ TinyIntent.mlmodel missing"
+	@test -f $(ROUTER_DIR)/train_summary.json && echo "  ✅ Training summary available" || echo "  ❌ Training summary missing"
+	@test -f $(ROUTER_DIR)/data/eval_results.json && echo "  ✅ Evaluation results available" || echo "  ❌ Evaluation results missing"
+	@echo ""
+	@echo "$(GREEN)✅ Learning loop completed with versioned CoreML artifacts!$(NC)"
+	@echo "$(GREEN)Access training status via: GET /router/train_summary$(NC)"
 
 learn-dry: ## M7.5: Dry-run learning loop analysis without training
 	@echo "$(GREEN)Starting TinyIntent Learning Loop (DRY RUN)...$(NC)"
@@ -170,6 +188,11 @@ doctor: ## Run local CI and system health checks
 	@echo "============================"
 	@$(PYTHON) scripts/ci_local.py
 	@$(PYTHON) scripts/doctor.py
+
+doctor-json: ## Run doctor and output JSON results path
+	@echo "$(GREEN)Running TinyIntent Doctor (JSON output)...$(NC)"
+	@$(PYTHON) scripts/doctor.py
+	@echo "$(GREEN)JSON results saved to:$(NC) $(PROJECT_ROOT)/bridge/logs/doctor.json"
 
 ##@ Utilities
 clean: router-clean ## Clean all build artifacts

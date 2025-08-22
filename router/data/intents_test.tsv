@@ -1,0 +1,23 @@
+text	label
+Generate a report for the meeting	gen
+Write documentation for this API	gen
+Create a summary of quarterly results	gen
+Tell me about renewable energy	gen
+Explain machine learning concepts	gen
+Help me write an essay	gen
+Close all open positions immediately	act
+Restart the trading bot service	act
+Check the current bot status	act
+Stop all automated trading	act
+Emergency shutdown of all systems	act
+Monitor server performance	act
+Execute the backup procedure	act
+Update bot trading parameters	act
+Run system health diagnostics	act
+Deploy new trading strategy	act
+Compose an email to the team	gen
+Draft a proposal for the project	gen
+Generate creative writing content	gen
+Translate this text to Spanish	gen
+Rewrite this paragraph clearly	gen
+Create a poem about technology	gen

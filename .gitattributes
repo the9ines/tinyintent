@@ -1,0 +1,31 @@
+# TinyIntent Git Attributes
+# M10.6: Audit Remediation (CoreML Models)
+
+# Large Language/ML model files should use Git LFS for files >100MB
+*.mlmodel filter=lfs diff=lfs merge=lfs -text
+*.mlpackage filter=lfs diff=lfs merge=lfs -text
+*.onnx filter=lfs diff=lfs merge=lfs -text
+
+# Training artifacts that might be large
+*.safetensors filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text
+
+# Ensure text files are handled properly
+*.md text
+*.py text
+*.swift text
+*.yaml text
+*.yml text
+*.json text
+*.txt text
+*.tsv text
+*.csv text
+*.sh text eol=lf
+*.makefile text eol=lf
+Makefile text eol=lf
+
+# Binary files
+*.pkl binary
+*.tar.gz binary
+*.zip binary
+*.dmg binary

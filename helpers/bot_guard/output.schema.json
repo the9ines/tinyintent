@@ -13,9 +13,26 @@
       "type": "string",
       "description": "The operation that was performed or previewed"
     },
+    "exchange": {
+      "type": "string",
+      "description": "Exchange name or identifier"
+    },
     "symbol": {
       "type": "string",
       "description": "Trading pair symbol"
+    },
+    "action": {
+      "type": "string",
+      "description": "Specific action taken or previewed"
+    },
+    "result": {
+      "type": "object",
+      "description": "Detailed operation result data",
+      "additionalProperties": true
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "Whether this was a dry run (preview only)"
     },
     "action_type": {
       "type": "string",
@@ -173,6 +190,6 @@
       "description": "Unique execution identifier for tracking"
     }
   },
-  "required": ["status", "operation", "action_type", "message", "timestamp"],
+  "required": ["status", "operation", "exchange", "action", "result", "dry_run", "action_type", "message", "timestamp"],
   "additionalProperties": false
 }

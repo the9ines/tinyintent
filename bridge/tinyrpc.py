@@ -25,6 +25,7 @@ from tinyintent.helpers.sdk import helper_registry
 from tinyintent.data.episodes.episodes import agent_staging_storage
 
 
+
 def setup_logging() -> None:
     """Configure structured logging."""
     if settings.logging.structured_logging:

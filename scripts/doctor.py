@@ -174,21 +174,89 @@ class SystemDoctor:
         print("🧠 Checking model availability...")
         
         router_model = self.project_root / "router" / "SmallIntent.mlmodel"
+        tiny_model = self.project_root / "router" / "TinyIntent.mlmodel"
         training_data = self.project_root / "router" / "data" / "intents.tsv"
         models_config = self.project_root / "models.yaml"
+        
+        # Check training infrastructure
+        train_script = self.project_root / "router" / "train_router.swift"
+        eval_script = self.project_root / "router" / "eval_router.swift"
+        promote_script = self.project_root / "scripts" / "promote_model.py"
+        
+        training_infra_present = (
+            train_script.exists() and 
+            eval_script.exists() and 
+            promote_script.exists()
+        )
         
         all_good = True
         model_status = {}
         
-        # Check router model
-        if router_model.exists():
+        # Check CoreML models with infrastructure-aware logic
+        small_model_present = router_model.exists()
+        tiny_model_present = tiny_model.exists()
+        
+        if small_model_present:
             print("  ✅ SmallIntent.mlmodel present")
-            model_status["router_model"] = True
+            model_status["small_model"] = True
         else:
             print("  ❌ SmallIntent.mlmodel missing")
-            model_status["router_model"] = False
-            all_good = False
-            self.results["recommendations"].append("Train router model with 'make router-train'")
+            model_status["small_model"] = False
+            
+        if tiny_model_present:
+            print("  ✅ TinyIntent.mlmodel present")
+            model_status["tiny_model"] = True
+        else:
+            print("  ❌ TinyIntent.mlmodel missing")
+            model_status["tiny_model"] = False
+        
+        # M10.6: Models are required for bridge startup - treat missing models as critical
+        models_missing = not small_model_present and not tiny_model_present
+        
+        if models_missing:
+            if training_infra_present:
+                # Training infrastructure exists - models can be built
+                print("  ❌ CoreML models missing - BRIDGE WILL NOT START")
+                print("      Training infrastructure present - models can be generated")
+                model_status["present"] = False
+                model_status["severity"] = "critical"
+                model_status["hint"] = "Run `make learn` to build required models before starting bridge."
+                model_status["bridge_startup"] = "blocked"
+                self.results["recommendations"].append("CRITICAL: Run 'make learn' to build CoreML models before starting bridge")
+                all_good = False  # M10.6: Models are required, mark as failure
+            else:
+                # No training infrastructure - this is a severe failure
+                print("  ❌ CoreML models missing and training infrastructure not found")
+                print("      BRIDGE CANNOT START - models are required")
+                model_status["present"] = False
+                model_status["severity"] = "critical"
+                model_status["hint"] = "Training infrastructure missing - setup required"
+                model_status["bridge_startup"] = "blocked"
+                all_good = False
+                self.results["recommendations"].append("CRITICAL: Set up training infrastructure and build CoreML models")
+        else:
+            model_status["present"] = True
+            model_status["severity"] = "ok"
+            model_status["bridge_startup"] = "ready"
+            
+            # Check model file sizes and metadata
+            if small_model_present:
+                small_size = router_model.stat().st_size
+                model_status["small_model_size_mb"] = round(small_size / (1024 * 1024), 1)
+                print(f"     SmallIntent.mlmodel: {model_status['small_model_size_mb']}MB")
+                
+            if tiny_model_present:
+                tiny_size = tiny_model.stat().st_size
+                model_status["tiny_model_size_mb"] = round(tiny_size / (1024 * 1024), 1)
+                print(f"     TinyIntent.mlmodel: {model_status['tiny_model_size_mb']}MB")
+        
+        # Check training infrastructure details
+        model_status["training_infrastructure"] = {
+            "train_script": train_script.exists(),
+            "eval_script": eval_script.exists(), 
+            "promote_script": promote_script.exists(),
+            "complete": training_infra_present
+        }
         
         # Check training data
         if training_data.exists():
@@ -201,11 +269,13 @@ class SystemDoctor:
                     lines = f.readlines()
                     line_count = len([l for l in lines if l.strip()])
                     print(f"     {line_count} training examples")
+                    model_status["training_examples"] = line_count
                     if line_count < 10:
                         print("  ⚠️  Very few training examples")
                         self.results["recommendations"].append("Gather more training data for better accuracy")
             except Exception as e:
                 print(f"  ⚠️  Could not read training data: {e}")
+                model_status["training_data_error"] = str(e)
         else:
             print("  ❌ Training data missing")
             model_status["training_data"] = False
@@ -222,12 +292,16 @@ class SystemDoctor:
             all_good = False
             self.results["recommendations"].append("Create models.yaml configuration")
         
+        # Status determination: only fail if both models missing AND no training infrastructure
+        status = "pass" if all_good else ("warning" if training_infra_present and models_missing else "fail")
+        
         self.results["checks"]["models"] = {
-            "status": "pass" if all_good else "fail",
+            "status": status,
             "details": model_status
         }
         
-        return all_good
+        # Return success if either models present or training infrastructure available
+        return all_good or (training_infra_present and not models_missing)
     
     def check_system_deps(self) -> bool:
         """Check system dependencies."""
@@ -447,7 +521,7 @@ def main():
     doctor.print_recommendations()
     
     # Save results for API endpoint to read
-    results_file = project_root / "data" / "doctor_results.json"
+    results_file = project_root / "bridge" / "logs" / "doctor.json"
     results_file.parent.mkdir(parents=True, exist_ok=True)
     
     with open(results_file, 'w') as f:

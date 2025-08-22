@@ -8,6 +8,7 @@ to the rest of the system.
 """
 
 import os
+import json
 import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -66,6 +67,14 @@ class HelperRegistryEntry:
         # M10.2: Agent Lifecycle Governance
         self.lifecycle = self._load_lifecycle(registry_data)
         
+        # M10.5: Agent Provenance & Tamper-evidence
+        self.provenance_ok = True
+        self.provenance_reason = ""
+        self.provenance_details = {}
+        
+        # M10.7: Agent Quotas & Cost Guardrails
+        self.quota_limits = self._load_quota_limits(registry_data)
+        
         # Validation state
         self.is_valid = True
         self.validation_errors = []
@@ -77,6 +86,7 @@ class HelperRegistryEntry:
         self._validate_enabled()
         self._validate_version_metadata()
         self._validate_lifecycle()
+        self._validate_provenance()
     
     def _validate_environment(self):
         """Validate that required environment variables are present."""
@@ -151,6 +161,52 @@ class HelperRegistryEntry:
         
         return lifecycle_data
     
+    def _load_quota_limits(self, registry_data: Dict[str, Any]) -> Dict[str, int]:
+        """M10.7: Load quota limits from helper manifest with environment defaults."""
+        try:
+            # Start with environment defaults
+            limits = {
+                "preview_per_min": int(os.environ.get("AGENT_MAX_PREVIEW_PER_MIN", 60)),
+                "exec_per_min": int(os.environ.get("AGENT_MAX_EXEC_PER_MIN", 10)),
+                "daily_exec_budget": int(os.environ.get("AGENT_DAILY_EXEC_BUDGET", 200))
+            }
+            
+            # Try to load per-agent overrides from helper.yaml
+            try:
+                if hasattr(self, 'manifest_path') and self.manifest_path:
+                    manifest_path = Path(self.manifest_path)
+                else:
+                    # Fallback to standard location
+                    project_root = Path(__file__).parent.parent
+                    manifest_path = project_root / "helpers" / self.helper_id / "helper.yaml"
+                
+                if manifest_path.exists():
+                    with open(manifest_path, 'r') as f:
+                        manifest_data = yaml.safe_load(f)
+                    
+                    # Load limits section from helper.yaml
+                    if isinstance(manifest_data, dict) and "limits" in manifest_data:
+                        helper_limits = manifest_data["limits"]
+                        if isinstance(helper_limits, dict):
+                            # Override defaults with helper-specific values
+                            for key in ["preview_per_min", "exec_per_min", "daily_exec_budget"]:
+                                if key in helper_limits:
+                                    limits[key] = int(helper_limits[key])
+                                    
+            except (FileNotFoundError, yaml.YAMLError, ValueError, TypeError):
+                # Use environment defaults if manifest loading fails
+                pass
+            
+            return limits
+            
+        except (ValueError, TypeError):
+            # Return safe defaults if environment variables are invalid
+            return {
+                "preview_per_min": 60,
+                "exec_per_min": 10,
+                "daily_exec_budget": 200
+            }
+    
     def _validate_lifecycle(self):
         """M10.2: Validate lifecycle configuration."""
         from .manifest import validate_lifecycle_state
@@ -162,6 +218,56 @@ class HelperRegistryEntry:
         if not is_valid:
             self.validation_errors.extend(errors)
             self.is_valid = False
+    
+    def _validate_provenance(self):
+        """M10.5: Validate agent provenance and tamper-evidence."""
+        try:
+            # Import here to avoid circular dependencies
+            from pathlib import Path
+            
+            # Determine helper directory from manifest path
+            if hasattr(self, 'manifest_path') and self.manifest_path:
+                helper_dir = Path(self.manifest_path).parent
+            else:
+                # Fallback to standard location
+                project_root = Path(__file__).parent.parent
+                helper_dir = project_root / "helpers" / self.helper_id
+            
+            # Skip provenance check if helper directory doesn't exist
+            if not helper_dir.exists():
+                self.provenance_ok = False
+                self.provenance_reason = "Helper directory not found"
+                return
+            
+            # Import and verify provenance
+            try:
+                from tinyintent.bridge.provenance import verify_provenance, log_verification_result
+                
+                ok, reason, details = verify_provenance(helper_dir)
+                
+                self.provenance_ok = ok
+                self.provenance_reason = reason
+                self.provenance_details = details
+                
+                # Log verification result
+                log_verification_result(self.helper_id, ok, reason, details)
+                
+                # M10.5: Safe-by-default - disable execution if provenance fails
+                if not ok:
+                    self.can_execute = False
+                    self.validation_errors.append(f"Provenance verification failed: {reason}")
+                
+            except ImportError:
+                # Provenance module not available (e.g., during development)
+                self.provenance_ok = False
+                self.provenance_reason = "Provenance verification not available"
+                # Don't disable execution for import errors
+                
+        except Exception as e:
+            # Handle any unexpected errors gracefully
+            self.provenance_ok = False
+            self.provenance_reason = f"Provenance validation error: {e}"
+            # Log error but don't fail the entire registry load
     
     def is_lifecycle_state(self, state: str) -> bool:
         """M10.2: Check if helper is in a specific lifecycle state."""
@@ -208,7 +314,10 @@ class HelperRegistryEntry:
             "category": self.category,
             "risk_level": self.risk_level,
             "lifecycle": self.lifecycle,  # M10.2: Include lifecycle information
-            "can_be_routed": self.can_be_routed()  # M10.2: Include routing status
+            "can_be_routed": self.can_be_routed(),  # M10.2: Include routing status
+            "provenance_ok": self.provenance_ok,  # M10.5: Include provenance status
+            "provenance_reason": self.provenance_reason,  # M10.5: Include provenance reason
+            "quota_limits": self.quota_limits  # M10.7: Include quota limits
         }
         
         # M8.3: Include version metadata if present
@@ -485,3 +594,8 @@ class HelperRegistry:
             helper_id for helper_id, entry in self.registry_entries.items()
             if entry.is_lifecycle_state(state)
         ]
+    
+    def get_helper_quota_limits(self, helper_id: str) -> Optional[Dict[str, int]]:
+        """M10.7: Get quota limits for a helper."""
+        entry = self.registry_entries.get(helper_id)
+        return entry.quota_limits if entry else None

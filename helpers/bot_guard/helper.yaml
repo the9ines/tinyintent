@@ -38,3 +38,8 @@ metadata:
   author: "TinyIntent"
   risk_level: "high"
   audit_required: true
+
+limits:
+  preview_per_min: 30
+  exec_per_min: 5
+  daily_exec_budget: 50

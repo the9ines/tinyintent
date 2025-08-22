@@ -39,9 +39,12 @@ tinyintent/
 - **Endpoints**: `/route`, `/feedback`, `/readyz`
 
 ### Router
-- **Model**: SmallIntent.mlmodel (CoreML)
+- **Models**: 
+  - `SmallIntent.mlmodel` (macOS, ≤16MB)
+  - `TinyIntent.mlmodel` (mobile, ≤5MB)
 - **Classes**: `gen` (generative) vs `act` (action)
 - **Training**: Python + transformers → ONNX → CoreML
+- **Pipeline**: `make learn` produces versioned CoreML artifacts
 
 ### Helpers
 - **Runtime**: Node.js sandboxed execution
@@ -61,6 +64,37 @@ make test
 ./tests/router_smoke.sh  # Model training
 ./tests/helpers_smoke.sh # Helper framework
 ```
+
+## 🤖 Model Training & Deployment
+
+### Generate and Deploy CoreML Models
+
+```bash
+# Full learning pipeline: export episodes → train → evaluate
+make learn
+
+# Individual steps
+make router-train    # Train and produce SmallIntent.mlmodel + TinyIntent.mlmodel
+make router-eval     # Evaluate models with precision/recall metrics
+make promote         # Promote model to active use if criteria met
+```
+
+### Check Training Status
+
+```bash
+# Check model and training status via API
+curl -H "X-TinyIntent-Secret: $TINYINTENT_SECRET" \
+  http://localhost:8787/router/train_summary
+
+# Or run system health check
+make doctor
+```
+
+The `/router/train_summary` endpoint returns:
+- Training metrics (accuracy, precision/recall, F1 scores)
+- Model artifacts status (SmallIntent.mlmodel, TinyIntent.mlmodel)
+- Calibration curves and confidence statistics
+- Deployment readiness status
 
 ## 🔐 Security
 

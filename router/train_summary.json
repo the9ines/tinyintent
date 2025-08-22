@@ -1,0 +1,76 @@
+{
+  "timestamp": "2025-08-20T22:12:38.807380",
+  "status": "completed",
+  "model": {
+    "name": "google/electra-small-discriminator",
+    "architecture": "transformer_classification",
+    "num_parameters": 13549314,
+    "vocab_size": 30522,
+    "num_labels": 2
+  },
+  "dataset": {
+    "total_samples": 30,
+    "train_samples": 18,
+    "val_samples": 6,
+    "cal_samples": 6,
+    "label_distribution": {
+      "gen": 15,
+      "act": 15
+    }
+  },
+  "training": {
+    "epochs_completed": 10,
+    "batch_size": 8,
+    "learning_rate": 5e-05,
+    "early_stopping_patience": 3,
+    "device_used": "mps"
+  },
+  "performance": {
+    "validation_accuracy": 0.8333333333333334,
+    "validation_loss": 0.6548766493797302,
+    "calibration": {
+      "temperature": 0.1000052749944835,
+      "pre_calibration_ece": 0.46666561563809716,
+      "post_calibration_ece": 0.46666561563809716,
+      "method": "temperature_scaling"
+    }
+  },
+  "files": {
+    "model_path": "/Users/oberfelder/Projects/tinyintent/router/train/output/final_model",
+    "metadata_path": "/Users/oberfelder/Projects/tinyintent/router/train/output/metadata.json",
+    "calibration_path": "/Users/oberfelder/Projects/tinyintent/router/train/output/calibration.pkl",
+    "output_directory": "/Users/oberfelder/Projects/tinyintent/router/train/output"
+  },
+  "sample_predictions": [
+    {
+      "text": "Generate a summary report",
+      "predicted_label": "gen",
+      "raw_confidence": 0.5502958297729492,
+      "calibrated_confidence": 0.8827314972877502
+    },
+    {
+      "text": "Close all trading positions",
+      "predicted_label": "act",
+      "raw_confidence": 0.5140085816383362,
+      "calibrated_confidence": 0.6365593075752258
+    },
+    {
+      "text": "Write me a poem",
+      "predicted_label": "gen",
+      "raw_confidence": 0.5526605844497681,
+      "calibrated_confidence": 0.8922709822654724
+    },
+    {
+      "text": "Restart the server",
+      "predicted_label": "act",
+      "raw_confidence": 0.5236015319824219,
+      "calibrated_confidence": 0.720051109790802
+    },
+    {
+      "text": "Emergency stop all bots",
+      "predicted_label": "act",
+      "raw_confidence": 0.5324796438217163,
+      "calibrated_confidence": 0.7859949469566345
+    }
+  ]
+}

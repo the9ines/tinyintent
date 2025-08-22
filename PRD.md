@@ -1,343 +1,455 @@
-
-TinyIntent v2: Mac-First Local Intelligence Platform
-
+📄 TinyIntent v2: Mac-First Local Intelligence Platform
 This document outlines the product requirements and implementation plan for TinyIntent v2, a Mac-first, local-only intelligence platform. The project's core purpose is to provide an on-device, private, and extensible AI agent for managing personal operations, starting with crypto bot risk management.
-
 Project Framing
-
-* * Platform: Mac-first via a macOS service/app. Initial phone interaction uses a simple iOS Shortcut as a transport layer. A native iOS app is a later milestone.
-* * * * * * Inference: Absolutely no cloud inference. All LLMs run locally on the Mac via Ollama.
-* * Repo: Single monorepo located at /Users/oberfelder/projects/tinyintent.
-* * Bridge: The bridge service listens on port 8787 for both LAN and Tailscale connections.
-
-
+Platform: Mac-first via a macOS service/app. Initial iOS interaction uses a Shortcut; a native app is a future milestone.
+Inference: No cloud inference—local-only via Ollama.
+Router: Core ML model (ANE/NPU) used for intent classification.
+Repo: Single monorepo at /Users/oberfelder/projects/tinyintent
+Bridge: API service on port 8787 for LAN + Tailscale access.
 Capabilities
+🧑‍🧬 Intent Router (Core ML)
+SmallIntent for macOS (≤16MB), ANE-accelerated
+TinyIntent for iOS (≤5MB) – future milestone
+Router Runner: Lightweight Swift CLI returning gen|act with confidence. Fallback heuristic if model fails.
+Confidence calibration + abstain/fallback policies.
+Eval outputs include precision/recall/F1/confusion metrics and calibration curves.
+🧹 Pluggable Local LLM Roles
+models.yaml maps:
+small: llama3.1:8b-instruct-q5_K_M
+medium: qwen2.5:32b-instruct-q4_K_M
+large: llama3.1:70b-instruct-q4_K_M
+Overrides:
+Environment variables (MODEL_SMALL, etc.)
+Per-request LLM preference
+POST /admin/reload-models hot reloads model definitions
+make doctor provides readiness and missing models
+🌉 Bridge API Endpoints
+GET /healthz, GET /readyz – system status
+POST /route – routes text as gen, act, abstain
+POST /feedback – attaches result metadata
+POST /admin/reload-models – reloads models.yaml
+POST /admin/reload-helpers – hot reload helpers (M8.2)
+POST /emergency/kill – disables all execution until cleared
+GET /router/metrics – confidence/latency monitoring
+GET /router/train_summary – training stats
+🛠 Helpers Orchestrator
+Reflection Layer: Uses a small LLM to sanity-check helper previews (planned).
+Sandboxing:
+CPU, memory, timeout limits.
+Capability isolation (network, filesystem).
+Env validation (required_envs).
+Guardrails:
+Preview by default.
+Execute requires approval tokens, EXECUTION_ENABLED=1, rate limiting, and idempotency.
+Extensibility:
+Manifest + schema validation (helper.yaml, input/output schemas).
+Invalid helpers disabled at load.
+Hot reload support (M8.2).
+Initial helpers:
+bot_guard: real exchange adapter (sandbox-only default).
+log_tailer: returns last N error lines.
+ssh_ops: (future) restart bots, tail logs.
+👁 Continuous Monitoring
+Watchers (planned M6): bot drift, auth fails, log anomalies, DDoS.
+Audit + metrics pipeline already in place.
+/health endpoint reports runner, Ollama, bridge.
+📈 Experience Store & Offline Learning
+Episodes logged:
+data/episodes/events.ndjson
+data/episodes/events.db
+Schema includes: timestamp, session_id, action, route_pred, confidence, error codes.
+make learn: mines episodes, retrains router, runs eval.
+make promote: promotes models passing eval gates.
+autopilot.py: full loop (learn → eval → promote) with daily launchd scheduling.
+Conscious Memory Layer (planned M4.5+):
+SQLite FTS index + NDJSON mirror
+Tools: save_memory, query_memory, delete_memory
+🔐 Security & Key Management
+All endpoints require X-TinyIntent-Secret.
+ALLOW_DEV_LOCAL=1 bypass for dev.
+Keys stored in macOS Keychain.
+Executions are logged, rate-limited, and auditable.
+Secrets sanitized everywhere (bridge/sanitize).
+Exchange API credentials loaded from .env (dev) or Keychain (prod).
+🧬 Self-Modifying Agents (Future M9)
+Auto-evolving helpers via introspection + code synthesis.
+Reward signals: accuracy, resource use, user feedback, execution success, approval rates.
+Early design only.
+🧩 Self-Healing Logic (Future M9)
+Monitors logs for failure patterns.
+Matches known issues to fix recipes.
+LLM-assisted patches with --approve mode.
+Logs to logs/selfheal.log.
 
+## 🎯 M10.1 Agent Evolution - Operator Usage
 
-Intent Router (Core ML)
+The Agent Evolution system automatically suggests new helpers based on abstain/fallback patterns:
 
-The system uses a lean Core ML model for fast, local intent routing.
-* * * * SmallIntent (macOS): An ANE/NPU-accelerated .mlmodel for macOS, limited to ≤ 16 MB. This ships first and handles initial routing.
-* * TinyIntent (iOS): A separate, even smaller .mlmodel (≤ 5 MB) for a native iOS app, to be developed as a later milestone.
-* * Router Runner: A command-line binary that accepts text via stdin and outputs a label (gen or act). A return code of 0 indicates success. If the router fails (rc ≠ 0) or is missing, the system uses a heuristic fallback and logs the reason.
+### Discovery Phase
+```bash
+# Check for abstain patterns in the last 24 hours
+curl -H "Authorization: Bearer $TINYINTENT_SECRET" \
+  -X POST http://localhost:8787/agents/suggest \
+  -H "Content-Type: application/json" \
+  -d '{"window_hours": 24, "min_count": 8, "max_suggestions": 5}'
+```
 
-Pluggable Local LLM Roles
-
-The system is designed to allow model swapping without code changes.
-* * Configuration: A top-level models.yaml file defines roles, mapping them to specific Ollama tags.YAMLroles:
-*   small: llama3.1:8b-instruct-q5_K_M
-*   medium: qwen2.5:32b-instruct-q4_K_M
-*   large: llama3.1:70b-instruct-q4_K_M
-* 
-* * Overrides:
-    *     * Environment: Environment variables MODEL_SMALL, MODEL_MEDIUM, and MODEL_LARGE can override the models.yaml defaults.
-    *     * Per-request: The POST /route endpoint supports llm_pref ("small"|"medium"|"large") or llm_model ("<ollama-tag>") for on-demand model selection.
-* * Management:
-    *     * Hot Reload: A POST /admin/reload-models endpoint on localhost triggers a live reload of the model registry.
-    *     * Readiness Check: The /readyz endpoint includes models_present and a missing_models list. The make doctor command prints the effective model mapping and suggests ollama pull commands for missing models.
-
-
-Bridge APIs (Contracts)
-
-The bridge serves as the central API gateway. All non-health/readiness endpoints require an X-TinyIntent-Secret header.
-* GET /healthz: Returns a simple status JSON.
-* GET /readyz: Returns a 200 or 503 with a JSON payload of checks, including env_valid, ollama_present, router_binary, and models_present.
-* POST /route:
-    *     * Input: {text, route=auto|gen|act, llm_pref?, llm_model?}
-    *     * auto route: Uses the router. If a heuristic fallback is used, the response attaches _router_fallback: true.
-    *     * gen route: Returns a JSON payload with the generated text, model name, and optional performance metrics (tokens?, latency_ms?).
-    *     * act route: Delegates to the Helpers Orchestrator. Returns a preview or execution result JSON that is strictly schema-validated. Invalid input results in a 400 error.
-* POST /feedback: Finalizes an episode with feedback.
-* POST /admin/reload-models: Triggers a hot reload of models.yaml. (localhost-only)
-* POST /admin/reload-helpers: Triggers a hot reload of helper manifests. (localhost-only)
-
-
-Helpers Orchestrator
-
-This component manages specialized, short-lived subprocesses to perform actions.
-* * Spawning: Spawns sandboxed helpers from an allow-list, each with strict resource caps.
-* * Manifests: Helpers are defined by helpers/<id>/helper.yaml manifest files.
-    * purpose: A brief description.
-    * input/output schemas: JSON schemas for validation.
-    * commands: A list of allowed binaries and arguments.
-    * timeouts, cpu/mem caps, network_policy.
-* * Initial Helpers:
-    * ssh_ops: For safe SSH runbooks (e.g., restart a bot, tail logs).
-    * bot_guard: For crypto bot risk controls (e.g., preview/execute closing a position).
-    * log_tailer: For retrieving the last N error lines from logs.
-* * Modes & Guardrails:
-    *     * Preview: The default mode. Returns a strict JSON of intended actions.
-    *     * Execute: Available only for helpers explicitly marked as executable. Requires one of the following:
-        2. Two-step approval: The initial preview request returns an approval token, which is then sent back in a subsequent execute request.
-        4.         4. Emergency Close: A special flow for the bot_guard helper, gated by a one-time code and a specific confirmation phrase.
-* * Logging: All helper actions, inputs, and results are appended to bridge/logs/audit.log.
-* * Hot Reload: The helpers/registry.yaml file lists all helpers, and POST /admin/reload-helpers triggers a live reload.
-
-
-Continuous Monitoring
-
-An always-on system using macOS LaunchAgent watchers.
-* * Watchers:
-    * Bot heartbeat/latency/PNL drift.
-    * VPS health (CPU, disk, updates).
-    * Auth-fail bursts.
-    * Log anomalies (regex-based).
-    * Open ports, basic DDoS hints.
-* * Responses: Threshold breaches trigger advisories (macOS notifications) and route events. Limited auto-mitigations (e.g., bot restart) are only allowed with explicit approval, except in a pre-defined emergency flow.
-
-
-Experience Store & Offline Learning
-
-All events are logged locally for analysis and model improvement.
-* * Data Capture: Every request and result is appended to data/episodes/events.ndjson and mirrored in a local SQLite database.
-* * Event Schema: ts, session_id, text, route_pred, route_final, model_used, latency_ms, helper_id?, helper_input?, preview_json?, executed?, success?, feedback?, error_code?, labels[], hash.
-* * Offline Loop: The make learn script mines episodes, updates training data (router/data/intents*.tsv), retrains the SmallIntent model, evaluates it against gates, and promotes it to the bridge if it passes. No online weight updates occur.
-
-
-Security & Key Management
-
-* * Auth: X-TinyIntent-Secret is required on all core endpoints.
-* * Dev Bypass: An optional dev-only loopback bypass is enabled with ALLOW_DEV_LOCAL=1 if the request has no X-Forwarded-For header.
-* * * * Key Storage: SSH uses the user’s standard ~/.ssh/config and agent. Exchange API keys are stored securely in the macOS Keychain, with trade-only permissions and withdrawals disabled.
-* * Auditing: All exec paths are rate-limited, require two-step approvals (unless in emergency mode), and are logged with arguments and exit codes.
-
-
-Environment Variables
-
-Variable	Description	Default	Example
-Server			
-TINYINTENT_BIND	Bind address for the server.	0.0.0.0	127.0.0.1
-TINYINTENT_PORT	Port for the server.	8787	8080
-TINYINTENT_SECRET	Secret for API auth. Required.	None	a32b2f...
-ALLOW_DEV_LOCAL	Bypass secret auth for localhost.	0	1
-Models			
-MODEL_SMALL	Override tag for small model.	llama3.1:8b...	llama3.1:8b...
-MODEL_MEDIUM	Override tag for medium model.	qwen2.5:32b...	qwen2.5:32b...
-MODEL_LARGE	Override tag for large model.	llama3.1:70b...	llama3.1:70b...
-Helpers			
-HELPERS_ENABLED	Enable helper orchestration.	1	0
-HELPERS_DIR	Directory for helper manifests.	helpers/	./helpers
-ALLOW_EXECUTION	Allow execute mode.	0	1
-EMERGENCY_CODE_SOURCE	Path to file for emergency codes.	None	/path/to/codes
-Watchers			
-WATCHERS_ENABLED	Enable continuous monitoring.	1	0
-WATCHERS_CONFIG	Path to watcher configs.	watchers/	./watchers
-Data			
-RETENTION_DAYS	Max days to retain event data.	30	90
-EPISODES_DB_PATH	Path for the SQLite database.	data/episodes/events.db	/tmp/events.db
-
-Sequence Diagrams & Examples
-
-
-Two-Step Approval for Guarded Execution
-
-This flow is critical for actions with real-world consequences, like closing a bot position.
-1. Preview Request
-JSON
-
-
-
+### Response Example
+```json
 {
-  "text": "Close my bot position on ETH.",
-  "route": "act",
-  "llm_pref": "small"
+  "suggestions": [
+    {
+      "spec": {
+        "id": "web_scraper",
+        "description": "Fetch data from web URLs based on abstain patterns",
+        "language": "python",
+        "capabilities": ["network"],
+        "can_execute": false,
+        "risk_level": "high",
+        "inputs": {
+          "type": "object",
+          "properties": {
+            "url": {"type": "string", "format": "uri"}
+          },
+          "required": ["url"]
+        },
+        "outputs": {
+          "type": "object",
+          "properties": {
+            "data": {"type": "string"},
+            "status": {"type": "string"}
+          },
+          "required": ["data"]
+        }
+      },
+      "valid": true,
+      "cluster_info": {
+        "sample_count": 12,
+        "representative_text": "Fetch data from https://api.example.com",
+        "themes": ["web_interaction", "data_retrieval"],
+        "confidence_score": 0.85
+      }
+    }
+  ],
+  "clusters_analyzed": 2,
+  "total_abstain_events": 18,
+  "window_hours": 24
 }
-2. Preview Response
-JSON
+```
 
+### Creation Phase
+```bash
+# Create helper from approved suggestion
+curl -H "Authorization: Bearer $TINYINTENT_SECRET" \
+  -X POST http://localhost:8787/agents/create_from_suggestion \
+  -H "Content-Type: application/json" \
+  -d '{"spec": {...}}'  # Use spec from suggestion response
+```
 
+### Safety Features
+- **Security Defaults**: All suggested helpers have `can_execute: false` and `risk_level: high`
+- **Capability Inference**: Minimal capabilities inferred from request patterns
+- **Suggestion Tracking**: Episodes labeled with `label_source: "suggestion"` for impact analysis
+- **Validation**: All specs validated before creation, invalid specs marked with errors
 
+## 🎯 M10.2 Agent Lifecycle Governance - Operator Usage
+
+The Agent Lifecycle Governance system provides explicit controls and metrics for managing helpers over time with lifecycle states and pruning suggestions.
+
+### Lifecycle States
+- **draft**: New or experimental helpers, not yet production-ready
+- **trusted**: Stable helpers safe for production use
+- **deprecated**: Older helpers being phased out, still functional but with warnings
+- **retired**: Helpers no longer available, blocked from execution
+
+### View Helper Lifecycle Status
+```bash
+# Get lifecycle status and metrics for a specific helper
+curl -H "Authorization: Bearer $TINYINTENT_SECRET" \
+  http://localhost:8787/agents/lifecycle/bot_guard
+```
+
+### Response Example
+```json
 {
-  "status": "success",
-  "action": "preview",
   "helper_id": "bot_guard",
-  "preview_json": {
-    "operation": "close_position",
-    "symbol": "ETH/USDT"
+  "lifecycle": {
+    "state": "trusted",
+    "since": "2024-12-15",
+    "notes": "Core helper - production ready"
   },
-  "approval_token": "a1b2c3d4e5f6g7h8"
-}
-3. Execute Request
-JSON
-
-
-
-{
-  "text": "Close my bot position on ETH.",
-  "route": "act",
-  "approval_token": "a1b2c3d4e5f6g7h8",
-  "execute": true
-}
-4. Execute Response
-JSON
-
-
-
-{
-  "status": "success",
-  "action": "execute",
-  "helper_id": "bot_guard",
-  "result": {
-    "status": "ok",
-    "message": "Position closed successfully."
+  "metrics": {
+    "total_calls": 156,
+    "success_rate": 0.987,
+    "last_used": "2025-08-21T10:30:00Z",
+    "error_rate": 0.013,
+    "avg_latency_ms": 245.6
   }
 }
+```
 
+### Update Helper Lifecycle
+```bash
+# Deprecate a helper
+curl -H "Authorization: Bearer $TINYINTENT_SECRET" \
+  -X POST http://localhost:8787/agents/lifecycle/set \
+  -H "Content-Type: application/json" \
+  -d '{
+    "helper_id": "old_helper",
+    "state": "deprecated",
+    "notes": "Use new_helper instead - will be retired Q1 2025"
+  }'
 
-Emergency Close Flow
+# Retire a helper completely
+curl -H "Authorization: Bearer $TINYINTENT_SECRET" \
+  -X POST http://localhost:8787/agents/lifecycle/set \
+  -H "Content-Type: application/json" \
+  -d '{
+    "helper_id": "legacy_helper", 
+    "state": "retired",
+    "notes": "No longer maintained, functionality moved to core_helper"
+  }'
+```
 
-This single-step flow is for critical situations.
-1. Emergency Request
-JSON
+### Get Pruning Suggestions
+```bash
+# Get suggestions for helpers to deprecate or retire
+curl -H "Authorization: Bearer $TINYINTENT_SECRET" \
+  "http://localhost:8787/agents/prune_suggestions?min_days=30&min_calls=3&max_error_rate=0.4"
+```
 
-
-
+### Pruning Response Example
+```json
 {
-  "text": "Emergency, close all positions now.",
-  "route": "act",
-  "helper_id": "bot_guard",
-  "emergency_code": "007-ABC-42",
-  "confirmation_phrase": "confirm emergency close"
+  "suggestions": [
+    {
+      "helper_id": "unused_helper",
+      "current_state": "trusted", 
+      "suggested_action": "retire",
+      "reason": "Low usage: 2 calls in 45 days",
+      "metrics": {
+        "total_calls": 2,
+        "days_since_last_use": 45,
+        "error_rate": 0.0
+      }
+    },
+    {
+      "helper_id": "error_prone_helper",
+      "current_state": "trusted",
+      "suggested_action": "deprecate", 
+      "reason": "High error rate: 67% (4/6 calls)",
+      "metrics": {
+        "total_calls": 6,
+        "days_since_last_use": 2,
+        "error_rate": 0.67
+      }
+    }
+  ],
+  "criteria": {
+    "min_days_unused": 30,
+    "min_calls_threshold": 3,
+    "max_error_rate": 0.4
+  },
+  "total_helpers_analyzed": 8
 }
+```
 
+### Lifecycle Enforcement Behavior
 
-Sample Helper Manifest
+#### Deprecated Helpers
+- ✅ **Execution allowed** but with warnings
+- 📋 **HTTP headers added**: `X-Helper-Deprecated: true`, `X-Helper-Status: deprecated`
+- 📊 **Audit logging** of deprecated helper usage
+- 🔔 **Operator alerts** to migrate to newer alternatives
 
-helpers/bot_guard/helper.yaml
-YAML
+#### Retired Helpers  
+- ❌ **Execution blocked** with `410 Gone` responses
+- 📋 **HTTP headers added**: `X-Helper-Status: retired`
+- 📊 **Audit logging** of retirement violation attempts
+- 🚫 **Complete unavailability** until manually restored
 
+### Registry Configuration
 
+Helpers can define lifecycle in `helpers/registry.yaml`:
+```yaml
+helpers:
+  my_helper:
+    # ... other config ...
+    lifecycle:
+      state: "trusted"      # draft|trusted|deprecated|retired
+      since: "2024-12-15"   # ISO date when state was set
+      notes: "Production ready - stable API"
+```
 
-purpose: "Crypto bot risk management and emergency controls."
-schema:
-  input: "./input.schema.json"
-  output: "./output.schema.json"
-capabilities:
-  preview: true
-  execute: true
-  emergency_close: true
-sandbox:
-  commands:
-    - "/usr/bin/node"
-    - "./main.js"
-  network: "isolated"
-  timeouts:
-    - name: "default"
-      seconds: 5
-    - name: "execute"
-      seconds: 15
-  cpu:
-    max_ms: 1000
-  mem:
-    max_mb: 50
-environment:
-  required:
-    - "EXCHANGE_API_KEY"
-    - "EXCHANGE_SECRET"
-    - "EXCHANGE_PASSPHRASE"
+### Safety Features
+- **Backward Compatibility**: Helpers without lifecycle default to `trusted` state  
+- **Audit Trail**: All lifecycle changes and violations logged
+- **Graceful Degradation**: Deprecated helpers continue working with warnings
+- **Operator Control**: Manual override capabilities for emergency situations
+- **Metrics-Driven**: Pruning suggestions based on actual usage patterns
 
+📁 Repository Layout
+/Users/oberfelder/projects/tinyintent/
+/Users/oberfelder/projects/tinyintent/
+    1 /Users/oberfelder/projects/tinyintent/
+    2 ├── PRD.md
+    3 ├── README.md
+    4 ├── claude.md
+    5 ├── pyproject.toml
+    6 ├── Makefile
+    7 ├── models.yaml
+    8 ├── launchd/
+    9 │   └── com.tinyintent.tinyrpc.sample.plist
+   10 ├── bridge/
+   11 │   ├── tinyrpc.py
+   12 │   ├── api_routes.py
+   13 │   ├── security.py
+   14 │   ├── gen_client.py
+   15 │   ├── router_client.py
+   16 │   ├── errors.py
+   17 │   ├── resolve.py
+   18 │   └── logs/
+   19 │       ├── audit.py
+   20 │       ├── sanitize.py
+   21 │       └── util.py
+   22 ├── data/
+   23 │   ├── episodes/
+   24 │   │   ├── __init__.py
+   25 │   │   ├── logger.py
+   26 │   │   ├── flush.py
+   27 │   │   └── schema.py
+   28 │   └── datasets/
+   29 ├── helpers/
+   30 │   ├── sdk.py
+   31 │   ├── manifest.py
+   32 │   ├── registry.py
+   33 │   ├── sandbox.py
+   34 │   ├── executor.py
+   35 │   ├── registry.yaml
+   36 │   ├── bot_guard/
+   37 │   │   ├── helper.yaml
+   38 │   │   ├── input.schema.json
+   39 │   │   ├── output.schema.json
+   40 │   │   └── main.js
+   41 │   └── log_tailer/
+   42 │       ├── helper.yaml
+   43 │       ├── input.schema.json
+   44 │       ├── output.schema.json
+   45 │       └── main.js
+   46 ├── router/
+   47 │   ├── train_router.swift
+   48 │   ├── eval_router.swift
+   49 │   ├── SmallIntent.mlmodel
+   50 │   ├── TinyIntent.mlmodel
+   51 │   ├── runner/
+   52 │   │   └── run_router.swift
+   53 │   └── data/
+   54 │       ├── intents.tsv
+   55 │       └── intents_test.tsv
+   56 ├── scripts/
+   57 │   ├── rotate_secret.sh
+   58 │   ├── print_urls_and_secret.sh
+   59 │   ├── export_episodes.py
+   60 │   ├── promote_model.py
+   61 │   ├── autopilot.py
+   62 │   └── ...
+   63 ├── tests/
+   64 │   ├── bridge/
+   65 │   ├── helpers/
+   66 │   ├── router/
+   67 │   ├── integration/
+   68 │   ├── health.sh
+   69 │   ├── auth.sh
+   70 │   ├── routes.smoke.sh
+   71 │   ├── router_smoke.sh
+   72 │   └── helpers_smoke.sh
 
-Repository Layout
+🔢 Milestones
+ID	Name	Summary
+M1	Bridge MVP	Core server + routing endpoint with model resolution
+M2	Experience Store	Structured local logging of all user requests/results
+M3	Router v1 (SmallIntent)	CoreML model training + evaluation suite
+M4	Helpers Framework v1	Manifest loader, runner, schema validation
+M4.5	Guarded Execution	Approval-token system; emergency kill switch
+M5	Eval & Retrain Kit	make learn + eval gates; autopilot retrain loop
+M6	Security Hardening	Sandboxing, capability isolation, rate limiting, audit integrity
+M7	Router Refinements	Async gen, calibration, abstain/fallback, metrics, circuit breaker
+M8	Helper Improvements	Real bot_guard integration, manifest validation, dynamic reload support
+M9	Self-Modifying Agents	Auto-evolving, reward-guided agent architecture for helpers
+M10	Agent Evolution	Episode mining for automated helper suggestion and creation
+M9	Self-Healing System	Self-healing agent with dry-run and approval modes for infrastructure
 
-tinyintent/
-├─ PRD.md
-├─ README.md
-├─ claude.md
-├─ models.yaml
-├─ Makefile
-├─ launchd/
-│  └─ com.tinyintent.tinyrpc.sample.plist
-├─ bridge/
-│  ├─ tinyrpc.py
-│  ├─ resolve.py
-│  └─ logs/
-├─ data/
-│  ├─ episodes/
-│  └─ datasets/
-├─ helpers/
-│  ├─ registry.yaml
-│  ├─ sdk.py
-│  └─ <helper_id>/
-├─ router/
-│  ├─ runner/
-│  ├─ SmallIntent.mlmodel
-│  ├─ TinyIntent.mlmodel
-│  └─ data/
-├─ scripts/
-│  ├─ rotate_secret.sh
-│  ├─ print_urls_and_secret.sh
-│  └─ ...
-└─ tests/
-   ├─ health.sh
-   ├─ auth.sh
-   └─ ...
+COMPLETED MILESTONES
+M1 – Bridge MVP
+Core server, config-based model resolution, and /route, /healthz, /readyz endpoints.
+M1.1 – Server Scaffolding: tinyrpc.py FastAPI scaffold, env parsing, and X-TinyIntent-Secret authentication.
+M1.2 – Ready Check Framework: /readyz returns router presence, model map status, and Ollama validation.
+M1.3 – Config-Driven Model Mapping: models.yaml loader + support for MODEL_SMALL, MODEL_MEDIUM, MODEL_LARGE overrides.
+M1.4 – Smoke Tests: health.sh, auth.sh, and routes.smoke.sh ensure API functionality.
+M2 – Experience Store
+Structured local logging of user requests/results into NDJSON and SQLite.
+M2.1 – data/episodes/ Setup: Directory + SQLite + events.ndjson append logic.
+M2.2 – Feedback Endpoint: POST /feedback saves user feedback tied to session ID.
+M2.3 – Session Logger: Unique session IDs, action metadata logging, latency tracking.
+M3 – Router v1 (SmallIntent)
+CoreML model training, evaluation, and binary runner for fast intent classification.
+M3.1 – Dataset Bootstrapping: Initial TSV intent samples for intents.tsv and intents_test.tsv.
+M3.2 – Training Swift Code: train_router.swift trains a Digibert-based CreateML model.
+M3.3 – Evaluation Logic: eval_router.swift with size and accuracy gates.
+M3.4 – Runner Integration: run_router.swift used by bridge to route via ANE.
+M3.5 – Promotion Flow: make learn, promote_model.py, and updated bridge integration.
+M4 – Helpers Framework v1
+Manifest-based helper execution framework.
+M4.1 – Manifest Loader: helpers/registry.yaml and manifest parsing.
+M4.2 – Schema Enforcement: JSON schema validation before execution.
+M4.3 – sdk.py Runtime: Safe execution engine with command allowlisting and timeouts.
+M4.4 – Log Tailer Helper: First implemented helper (basic test case).
+M4.5 – Guarded Execution: Two-step approval flow, emergency close path, helper preview/execute split.
+M5 – Execute Mode & Learning Loop
+M5.0 – Execute Mode & Risk Controls: Approval-guarded execution, EXECUTION_ENABLED gate, idempotency, schema validation.
+M5.1 – E2E Tests & Operator UX: Pytest coverage, reason codes, curl docstrings.
+M5.2 – Episode Mining Integration: Log preview/execute into ndjson + SQLite.
+M5.3 – Learning Loop Automation: export_episodes.py, make learn target.
+M5.4 – Evaluation & Promotion: eval_router.swift outputs eval results; promote_model.py gates promotion.
+M5.5 – Continuous Learning: autopilot.py, make autopilot, launchd template.
+M6 – Security Hardening
+M6.0 – Helper Registry Hardening: required_envs, safety_notes, disable missing-env helpers.
+M6.1 – Helper Sandboxing: CPU/memory/time limits, SANDBOX_LIMIT errors, tests.
+M6.2 – Audit Log Integrity: SHA256 hash chain, rotation at 50MB, continuity checks.
+M6.3 – Emergency Kill Switch: /emergency/kill endpoint, persisted flag disables execution.
+M6.4 – Secrets Management: Centralized sanitization, expanded redaction, scrubbed logs.
+M6.5 – Capability Isolation: Per-helper capabilities (network, filesystem), violations return 403.
+M6.6 – Rate Limiting: Per-session/global caps (429), per-helper exec caps.
+M7 – Router Refinements
+M7.0 – Router Refactor & Async Gen: Removed hardcoded routing; async Ollama with retries/backoff + semaphore.
+M7.1 – Router Quality & Fallbacks: Confidence calibration, abstain/fallback policy, rich eval metrics.
+M7.2 – Router Reliability Monitoring: /router/metrics endpoint, in-memory buffer, periodic flush.
+M7.3 – Generation Resilience: Circuit breaker for Ollama gen, /health endpoint, cancel in-flight requests.
+M7.4 – Self-Correction & Overrides: Abstain reasons, operator overrides, override-labeled episodes.
+M7.5 – Retraining Safeguards: Export --dry-run, train_summary.json, /router/train_summary.
+M8 – Helper Improvements
+M8.0 – Bot Guard Integration: Real exchange adapter (sandbox-only), schema validation, integration tests.
+M8.1 – Helper Extensibility: Manifest validation, disable invalid helpers, tests.
+M8.2 – Dynamic Helper Discovery & Hot Reload (next): /helpers/reload endpoint, reload helpers without restart, structured audit + tests.
 
+M10 – Agent Evolution
+Episode mining system for automated helper suggestion and creation based on abstain/fallback patterns.
+M10.1 – Episode Mining for Agent Suggestion: mine_abstain_clusters() analyzes fallback patterns, clusters similar requests via TF-IDF/k-means, POST /agents/suggest generates helper specs using Ollama, POST /agents/create_from_suggestion creates helpers with safety defaults (can_execute=false, risk_level=high), suggestion tracking in export_episodes.py with label_source tagging.
+### M10.6 – CoreML Artifact Remediation
+- Ensure `make learn` and `make promote` produce and persist `router/SmallIntent.mlmodel` and `router/TinyIntent.mlmodel`.
+- Add `doctor` check for model presence. If infra is present but models missing, mark as **warning** with hint to run training.
+- Update `DEPLOYMENT.md` and `README.md` with explicit operator steps for generating `.mlmodel` files.
+- Add `.gitattributes` LFS tracking for `.mlmodel` files if size >100MB.
 
-Milestones
+### M10.7 – Documentation Endpoints
+- Implement `GET /router/train_summary` in `bridge/api_routes.py`.
+- Return structured JSON from `router/train_summary.json` (accuracy, f1, latency, etc).
+- Implement `GET /endpoints` for operator/auditor visibility of registered routes.
+- Ensure FastAPI’s built-in `/docs`, `/redoc`, `/openapi.json` are exposed.
+- Add integration tests confirming endpoint availability and responses.
 
-
-M1: Bridge MVP
-
-* * Deliverables: Basic tinyrpc.py server, GET /healthz, GET /readyz (with basic checks), POST /route (gen/act), models.yaml resolver, X-TinyIntent-Secret auth, ALLOW_DEV_LOCAL bypass.
-* * Tests: health.sh, auth.sh, routes.smoke.sh.
-* * Definition of Done: All core endpoints operational and tested with secrets, model resolution works, readyz reflects system state.
-
-M2: Experience Store
-
-* * Deliverables: data/episodes directory, events.ndjson logging, SQLite mirror, POST /feedback endpoint, scripts/export_episodes.sh.
-* * Tests: New tests for feedback endpoint and episode logging.
-* * Definition of Done: Every request is logged to NDJSON and SQLite with the full schema. Feedback finalizes episodes.
-
-M3: Router v1 (SmallIntent)
-
-* * Deliverables: router/runner binary, initial SmallIntent.mlmodel (git-ignored), make router-train, make router-eval scripts.
-* * Tests: router_smoke.sh and a new set of evaluation tests to check accuracy and latency.
-* * Definition of Done: auto routing works, router is fast (≤ 2ms), and the build process for the router model is fully automated.
-
-M4: Helpers Framework v1
-
-* * Deliverables: Helpers Orchestrator, helpers/sdk.py, helpers/registry.yaml, manifest loader, sandbox spawning, POST /route with act (preview only), POST /admin/reload-helpers.
-* * Tests: helpers_smoke.sh to test manifest loading, preview mode, and hot reloading.
-* * Definition of Done: act route returns a valid preview JSON from a spawned helper, and helpers are reloaded without service restart.
-
-M5: Guarded Execution
-
-* * Deliverables: Two-step approval flow (token-based), emergency close feature (one-time code + phrase), Keychain integration for secure API keys, enhanced audit logging.
-* * Tests: New end-to-end tests for the approval flow, emergency close, and auditing.
-* * Definition of Done: Executing sensitive actions requires an explicit token, and all executions are logged in audit.log with their arguments.
-
-M6: Continuous Monitoring
-
-* * Deliverables: LaunchAgent configuration sample, initial watcher scripts, thresholds for advisories, limited auto-mitigation logic.
-* * Tests: watchers_smoke.sh to test basic watcher functionality and notification triggers.
-* * Definition of Done: Watchers run as a macOS service, trigger advisories on threshold breaches, and log their actions.
-
-M7: Eval & Retrain Kit
-
-* * Deliverables: make learn script to mine data, make router-eval with metric and size gates, scripts for promoting a new model.
-* * Tests: Automated evaluation scripts that fail if the new model is slower or less accurate.
-* * Definition of Done: A new model can be trained, evaluated, and promoted to production with a single command, gated by performance metrics.
-
-M8: Packaging & iOS
-
-* * Deliverables: Final LaunchAgent configuration, build scripts, make doctor for diagnosing issues, documentation for firewall/Tailscale setup, optional TinyIntent.mlmodel and native iOS app for late-stage testing.
-* * Tests: Integration tests with a sample iOS Shortcut.
-* * Definition of Done: A user can easily install and run the service, and a basic iOS Shortcut can communicate with the Mac service.
-
-
-SLOs & Acceptance
-
-* * Router Latency: p95 router inference latency ≤ 2 ms on a Mac Studio.
-* * Act-Preview: p95 round-trip latency for act-preview with the medium model ≤ 1.2 s.
-* * Readiness: /readyz returns a 200 status with models_present=true and helpers/registry ready on a properly configured machine.
-* * Security: Guarded execution requires an approval token. The emergency flow is restricted to close position and is fully audited.
-
-
-Risk & Mitigation
-
-* * Risk: Helper sandboxing is insufficient, leading to privilege escalation.
-    *     * Mitigation: Strict allow-listing of binaries, input schema validation, and running helpers with minimal permissions.
-* * Risk: Noisy monitoring leads to alert fatigue.
-    *     * Mitigation: Implement configurable thresholds, alert backoff policies, and a tiered notification system.
-* * Risk: Model drift causes the router to misclassify intents.
-    *     * Mitigation: The offline learning loop and evaluation gates prevent misbehaving models from being promoted to production.
+### M10.8 – Doctor + Packaging Integration
+- Extend `doctor` to report models, routes, and training metadata.
+- Package `.mlmodel` and router data files in `pyproject.toml` under `package-data`.
+- Verify `/doctor` endpoint surfaces the new checks.
+- Add integration tests to cover missing models (warning), missing routes (failure).

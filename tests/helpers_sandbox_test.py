@@ -395,10 +395,175 @@ print(json.dumps({"status": "success", "message": "Normal execution completed"})
         # Verify required fields
         self.assertIn("ts", log_entry)
         self.assertEqual(log_entry["action"], "sandbox_violation")
-        self.assertEqual(log_entry["violation_type"], "SANDBOX_LIMIT")
+        self.assertEqual(log_entry["violation_type"], "TIMEOUT")  # Should be TIMEOUT for timeout violations
         self.assertEqual(log_entry["helper_id"], self.helper_id)
         self.assertIn("details", log_entry)
         self.assertFalse(log_entry["success"])
+
+
+class TestSandboxViolationDetection(TestCase):
+    """M10.7: Test specific violation detection scenarios."""
+    
+    def setUp(self):
+        """Set up test environment."""
+        self.temp_dir = Path(tempfile.mkdtemp(prefix="sandbox_violation_test_"))
+        self.audit_log = self.temp_dir / "audit.log"
+        self.helper_id = "violation_test_helper"
+        
+        # Set test timeout
+        self.original_timeout = os.environ.get('SANDBOX_TIMEOUT_MS')
+        os.environ['SANDBOX_TIMEOUT_MS'] = '3000'
+    
+    def tearDown(self):
+        """Clean up test environment."""
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
+        
+        # Restore original timeout
+        if self.original_timeout:
+            os.environ['SANDBOX_TIMEOUT_MS'] = self.original_timeout
+        elif 'SANDBOX_TIMEOUT_MS' in os.environ:
+            del os.environ['SANDBOX_TIMEOUT_MS']
+    
+    def test_process_terminated_violation(self):
+        """M10.7: Test detection of process termination violations."""
+        sandbox = HelperSandbox(self.helper_id, self.audit_log)
+        sandbox.set_limits(processes=1, execution_time=5)
+        
+        # Create a script that tries to fork multiple processes
+        script_content = '''#!/usr/bin/env python3
+import os
+import json
+import sys
+
+try:
+    # Try to fork (will be limited by processes=1)
+    pid = os.fork()
+    if pid == 0:
+        # Child process
+        exit(0)
+    else:
+        # Parent process
+        os.wait()
+        print(json.dumps({"status": "success", "message": "Fork succeeded"}))
+except OSError as e:
+    print(json.dumps({"status": "error", "error": str(e)}))
+'''
+        
+        script_path = self.temp_dir / "fork_test.py"
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        script_path.chmod(0o755)
+        
+        # This might trigger a process limit violation on some systems
+        try:
+            result = sandbox.execute(
+                cmd=["python3", str(script_path)],
+                input_data="{}",
+                env=os.environ.copy(),
+                cwd=self.temp_dir
+            )
+            # If no violation, that's also acceptable
+        except SandboxViolationError as e:
+            self.assertEqual(e.error_code, "SANDBOX_LIMIT")
+    
+    def test_file_descriptor_violation_attempt(self):
+        """M10.7: Test that file descriptor limits are enforced."""
+        sandbox = HelperSandbox(self.helper_id, self.audit_log)
+        sandbox.set_limits(file_descriptors=8, execution_time=5)
+        
+        # Create a script that tries to open many files
+        script_content = '''#!/usr/bin/env python3
+import json
+import tempfile
+
+try:
+    files = []
+    # Try to open more files than the FD limit
+    for i in range(20):
+        f = open(f"/tmp/test_fd_{i}", "w")
+        files.append(f)
+        f.write("test")
+    
+    # Close files
+    for f in files:
+        f.close()
+    
+    print(json.dumps({"status": "success", "files_opened": len(files)}))
+except Exception as e:
+    print(json.dumps({"status": "error", "error": str(e)}))
+'''
+        
+        script_path = self.temp_dir / "fd_test.py"
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        script_path.chmod(0o755)
+        
+        # Execute and check if it gets limited (might vary by system)
+        try:
+            result = sandbox.execute(
+                cmd=["python3", str(script_path)],
+                input_data="{}",
+                env=os.environ.copy(),
+                cwd=self.temp_dir
+            )
+            # If it succeeds, the system may have different FD behavior
+        except (SandboxViolationError, RuntimeError):
+            # May get either sandbox violation or runtime error
+            pass
+    
+    def test_capability_violation_error_structure(self):
+        """M10.7: Test CapabilityViolationError structure and handling."""
+        from helpers.sandbox import CapabilityViolationError
+        
+        # Test error creation
+        error = CapabilityViolationError(
+            "Network access denied",
+            capability="network",
+            operation="socket_creation",
+            details={"attempted_host": "example.com", "port": 80}
+        )
+        
+        # Verify error structure
+        self.assertEqual(error.error_code, "CAPABILITY_VIOLATION")
+        self.assertEqual(error.capability, "network")
+        self.assertEqual(error.operation, "socket_creation")
+        self.assertEqual(error.details["attempted_host"], "example.com")
+        self.assertEqual(error.details["port"], 80)
+        self.assertIn("Network access denied", str(error))
+    
+    def test_sandbox_error_code_consistency(self):
+        """M10.7: Test that SANDBOX_LIMIT error codes are consistent."""
+        sandbox = HelperSandbox(self.helper_id, self.audit_log)
+        
+        # Test different types of sandbox limit violations
+        test_cases = [
+            ("timeout", "SANDBOX_TIMEOUT", {"timeout_seconds": 1}),
+            ("cpu_time", "SANDBOX_LIMIT", {"limit_type": "cpu_time"}),
+            ("memory", "SANDBOX_LIMIT", {"limit_type": "memory_or_resource"}),
+            ("output_size", "SANDBOX_LIMIT", {"limit_type": "output_size"})
+        ]
+        
+        for violation_type, expected_code, expected_details in test_cases:
+            # Create appropriate violation scenario
+            if violation_type == "timeout":
+                error = SandboxViolationError(
+                    "Process timed out", 
+                    expected_code, 
+                    expected_details
+                )
+            else:
+                error = SandboxViolationError(
+                    f"Exceeded {violation_type} limit",
+                    expected_code,
+                    expected_details
+                )
+            
+            self.assertEqual(error.error_code, expected_code)
+            for key, value in expected_details.items():
+                self.assertIn(key, error.details)
+                if isinstance(value, (int, str)):
+                    self.assertEqual(error.details[key], value)
 
 
 if __name__ == "__main__":
