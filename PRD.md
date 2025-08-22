@@ -53,9 +53,9 @@ This document outlines the product requirements and implementation plan for Tiny
 
 **Overrides**:
 - Environment variables (MODEL_SMALL, etc.)
-- Per-request LLM preference
-- `POST /admin/reload-models` hot reloads definitions
+- Per-request LLM preference  
 - `make doctor` provides readiness status
+- `GET /system/doctor` provides system health API
 
 ### 🌉 Modular Bridge API
 **Health & Status**:
@@ -67,10 +67,10 @@ This document outlines the product requirements and implementation plan for Tiny
 - `POST /feedback` - Attaches result metadata
 
 **Management**:
-- `POST /admin/reload-models` - Hot reload models.yaml
-- `POST /admin/reload-helpers` - Hot reload helpers (M8.2)
-- `POST /emergency/kill` - Emergency disable execution
+- `POST /system/emergency/kill` - Emergency disable execution
+- `GET /system/emergency/status` - Emergency status check
 - `GET /router/metrics` - Confidence/latency monitoring
+- `GET /router/train_summary` - Training summary and model deployment status
 🛠 Helpers Orchestrator
 Reflection Layer: Uses a small LLM to sanity-check helper previews (planned).
 Sandboxing:

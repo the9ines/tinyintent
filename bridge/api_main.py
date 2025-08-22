@@ -16,6 +16,7 @@ from .routes.helpers import router as helpers_router
 from .routes.agents import router as agents_router
 from .routes.shortcut import router as shortcut_router
 from .routes.system import router as system_router
+from .routes.router import router as router_router
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ router_api.include_router(helpers_router)
 router_api.include_router(agents_router)
 router_api.include_router(shortcut_router)
 router_api.include_router(system_router)
+router_api.include_router(router_router)
 
 # Legacy route models for compatibility
 class RouteRequest(BaseModel):
@@ -88,7 +90,8 @@ async def root():
             "helpers": "/helpers, /helpers/health",
             "agents": "/agents/lifecycle, /agents/create",
             "shortcut": "/shortcut/ping, /shortcut/route",
-            "system": "/system/doctor, /system/router/metrics",
+            "system": "/system/doctor, /system/emergency/kill",
+            "router": "/router/train_summary, /router/metrics",
             "main": "/route"
         },
         "documentation": "/docs"

@@ -9,11 +9,13 @@ from .helpers import helpers_router
 from .agents import agents_router
 from .shortcut import shortcut_router
 from .system import system_router
+from .router import router as router_router
 
 __all__ = [
     'health_router',
     'helpers_router', 
     'agents_router',
     'shortcut_router',
-    'system_router'
+    'system_router',
+    'router_router'
 ]

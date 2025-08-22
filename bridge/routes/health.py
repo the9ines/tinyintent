@@ -4,7 +4,7 @@ Health and readiness check endpoints.
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime
 import time
 

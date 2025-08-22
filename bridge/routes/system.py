@@ -4,9 +4,11 @@ System management and monitoring routes.
 
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 import os
+import json
+from pathlib import Path
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -25,6 +27,16 @@ class RouterMetricsResponse(BaseModel):
     avg_latency_ms: float
     accuracy: float
     model_status: str
+
+class TrainingSummaryResponse(BaseModel):
+    timestamp: str
+    status: str
+    model: Dict[str, Any]
+    dataset: Dict[str, Any]
+    training: Dict[str, Any]
+    performance: Dict[str, Any]
+    files: Dict[str, Any]
+    sample_predictions: List[Dict[str, Any]]
 
 @router.get("/doctor", response_model=DoctorResponse)
 async def system_doctor():
@@ -94,3 +106,24 @@ async def emergency_status():
         reason=None,
         triggered_at=None
     )
+
+@router.get("/router/train_summary", response_model=TrainingSummaryResponse)
+async def router_train_summary():
+    """Get router training summary and model deployment status."""
+    train_summary_path = Path("router/train_summary.json")
+    
+    if not train_summary_path.exists():
+        raise HTTPException(
+            status_code=404, 
+            detail="Training summary not found. Run 'make router-train' to generate."
+        )
+    
+    try:
+        with open(train_summary_path, 'r') as f:
+            train_summary = json.load(f)
+        return TrainingSummaryResponse(**train_summary)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load training summary: {str(e)}"
+        )
