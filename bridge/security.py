@@ -19,8 +19,27 @@ import structlog
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from tinyintent.bridge.logs.audit import get_audit_logger
-from tinyintent.config import settings
+from .logs.audit import get_audit_logger
+
+# Import settings with fallback
+try:
+    from tinyintent.config import settings
+except ImportError:
+    # Fallback for local development
+    class MockSettings:
+        class Security:
+            secret = None
+            allow_dev_local = True
+            rate_limit_session = 60
+            rate_limit_global = 500
+            rate_limit_window = 60
+        
+        security = Security()
+        
+        def is_development(self):
+            return True
+    
+    settings = MockSettings()
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -402,3 +421,126 @@ class RateLimiter:
                 "active_sessions": len(session_stats),
                 "session_counts": session_stats
             }
+
+
+class CSRFProtection:
+    """CSRF protection for state-changing endpoints."""
+    
+    def __init__(self, token_expiry_seconds: int = 3600):
+        self.token_expiry_seconds = token_expiry_seconds
+        self.tokens: Dict[str, Dict[str, Any]] = {}
+        self.lock = threading.Lock()
+    
+    def generate_csrf_token(self, session_id: str = "default") -> str:
+        """Generate a new CSRF token for a session."""
+        token = secrets.token_urlsafe(32)
+        expiry_time = time.time() + self.token_expiry_seconds
+        
+        with self.lock:
+            self.tokens[token] = {
+                "session_id": session_id,
+                "created_at": time.time(),
+                "expires_at": expiry_time
+            }
+            
+            # Clean up expired tokens
+            self._cleanup_expired_tokens()
+        
+        return token
+    
+    def verify_csrf_token(self, token: str, session_id: str = "default") -> bool:
+        """Verify a CSRF token for a session."""
+        if not token:
+            return False
+        
+        with self.lock:
+            token_data = self.tokens.get(token)
+            if not token_data:
+                return False
+            
+            # Check expiry
+            if time.time() > token_data["expires_at"]:
+                del self.tokens[token]
+                return False
+            
+            # Check session match
+            if token_data["session_id"] != session_id:
+                return False
+            
+            return True
+    
+    def _cleanup_expired_tokens(self):
+        """Remove expired CSRF tokens."""
+        current_time = time.time()
+        tokens_to_remove = [
+            token for token, data in self.tokens.items()
+            if current_time > data["expires_at"]
+        ]
+        
+        for token in tokens_to_remove:
+            del self.tokens[token]
+
+
+# Global CSRF protection instance
+csrf_protection = CSRFProtection()
+
+
+def verify_csrf_token(request: Request) -> bool:
+    """Verify CSRF token for state-changing operations."""
+    # Skip CSRF for read-only operations
+    if request.method in ["GET", "HEAD", "OPTIONS"]:
+        return True
+    
+    # Skip CSRF for certain authenticated API endpoints
+    if request.url.path.startswith("/shortcut/"):
+        # Shortcut endpoints have their own authentication
+        return True
+    
+    # Get CSRF token from header or form data
+    csrf_token = request.headers.get("X-CSRF-Token")
+    if not csrf_token:
+        # Try to get from form data for POST requests
+        if hasattr(request, "_body"):
+            try:
+                import json
+                body = json.loads(request._body.decode())
+                csrf_token = body.get("csrf_token")
+            except:
+                pass
+    
+    if not csrf_token:
+        logger.warning("Missing CSRF token", path=request.url.path, method=request.method)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF token required for state-changing operations"
+        )
+    
+    # Get session ID (from header or default)
+    session_id = request.headers.get("X-Session-ID", "default")
+    
+    if not csrf_protection.verify_csrf_token(csrf_token, session_id):
+        logger.warning("Invalid CSRF token", path=request.url.path, method=request.method, session_id=session_id)
+        
+        # Log to audit
+        audit_logger = get_audit_logger()
+        if audit_logger:
+            audit_logger.log_entry({
+                "action": "csrf_token_invalid",
+                "path": request.url.path,
+                "method": request.method,
+                "session_id": session_id,
+                "client_ip": request.client.host if request.client else "unknown",
+                "success": False
+            })
+        
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or expired CSRF token"
+        )
+    
+    return True
+
+
+def get_csrf_token(session_id: str = "default") -> str:
+    """Generate a new CSRF token for a session."""
+    return csrf_protection.generate_csrf_token(session_id)
