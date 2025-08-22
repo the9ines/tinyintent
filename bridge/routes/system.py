@@ -9,6 +9,8 @@ from datetime import datetime
 import os
 import json
 from pathlib import Path
+from ..security import verify_csrf_token
+from ..secret_manager import get_secret_manager
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -88,7 +90,7 @@ async def router_metrics():
     )
 
 @router.post("/emergency/kill")
-async def emergency_kill(reason: str = "Manual trigger"):
+async def emergency_kill(reason: str = "Manual trigger", csrf_valid: bool = Depends(verify_csrf_token)):
     """Emergency kill switch."""
     # TODO: Implement actual emergency kill functionality
     return {
@@ -126,4 +128,39 @@ async def router_train_summary():
         raise HTTPException(
             status_code=500,
             detail=f"Failed to load training summary: {str(e)}"
+        )
+
+
+@router.get("/secrets/status")
+async def secrets_status():
+    """Get secret management system status."""
+    secret_manager = get_secret_manager()
+    return secret_manager.get_security_status()
+
+
+@router.get("/secrets/available/{helper_id}")
+async def list_available_secrets(helper_id: str, trust_level: str = "draft"):
+    """List secrets available to a specific helper."""
+    secret_manager = get_secret_manager()
+    
+    # Validate trust level
+    valid_levels = ["draft", "trusted", "deprecated", "retired"]
+    if trust_level not in valid_levels:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid trust level. Must be one of: {valid_levels}"
+        )
+    
+    try:
+        available_secrets = secret_manager.list_available_secrets(helper_id, trust_level)
+        return {
+            "helper_id": helper_id,
+            "trust_level": trust_level,
+            "available_secrets": available_secrets,
+            "count": len(available_secrets)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list available secrets: {str(e)}"
         )

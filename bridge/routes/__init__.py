@@ -4,11 +4,11 @@ TinyIntent Bridge Routes Package
 Modular route organization for better maintainability.
 """
 
-from .health import health_router
-from .helpers import helpers_router  
-from .agents import agents_router
-from .shortcut import shortcut_router
-from .system import system_router
+from .health import router as health_router
+from .helpers import router as helpers_router  
+from .agents import router as agents_router
+from .shortcut import router as shortcut_router
+from .system import router as system_router
 from .router import router as router_router
 
 __all__ = [

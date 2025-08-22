@@ -16,6 +16,7 @@ from ..shortcut_format import (
     format_shortcut_response,
     get_shortcut_error_response
 )
+from ..security import constant_time_compare
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def verify_shortcut_token(request: Request) -> bool:
             detail="Missing X-Shortcut-Token header"
         )
     
-    if provided_token != expected_token:
+    if not constant_time_compare(provided_token, expected_token):
         raise HTTPException(
             status_code=401,
             detail="Invalid X-Shortcut-Token"

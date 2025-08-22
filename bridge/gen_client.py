@@ -18,7 +18,7 @@ from typing import Dict, Any
 
 from fastapi import HTTPException
 
-from tinyintent.bridge.logs.audit import get_audit_logger
+from .logs.audit import get_audit_logger
 
 class CircuitBreakerState(Enum):
     """Circuit breaker states."""
@@ -42,7 +42,9 @@ class GenerationCircuitBreaker:
         self.breakers = {}
         self.lock = threading.Lock()
         
-        print(f"Circuit breaker config: window={self.fail_window}s, threshold={self.threshold}, cooldown={self.cooldown}s")
+        # Only log circuit breaker config in debug mode
+        if os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower() in ["debug", "info"]:
+            print(f"Circuit breaker config: window={self.fail_window}s, threshold={self.threshold}, cooldown={self.cooldown}s")
     
     def _get_breaker_state(self, model: str) -> Dict[str, Any]:
         """Get or create breaker state for model."""
@@ -283,6 +285,16 @@ class AsyncOllamaClient:
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
         )
     
+    async def health_check(self):
+        """Check if Ollama is accessible."""
+        try:
+            response = await self.client.get(f"{self.ollama_host}/api/tags", timeout=5.0)
+            response.raise_for_status()
+            return True
+        except Exception:
+            # Health check failure is non-fatal, just log it
+            return False
+    
     async def generate_async(self, model: str, prompt: str, request_id: str = None, session_id: str = "") -> tuple[str, int]:
         """
         Generate text asynchronously with retries, backpressure control, and circuit breaker.
@@ -368,3 +380,9 @@ class AsyncOllamaClient:
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
+
+
+# Create global instances
+_circuit_breaker = GenerationCircuitBreaker()
+_task_manager = GenerationTaskManager()
+async_ollama_client = AsyncOllamaClient(_circuit_breaker, _task_manager)

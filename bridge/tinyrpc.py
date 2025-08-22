@@ -6,6 +6,7 @@ includes the API routes.
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,12 +18,18 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
+# Add project root to path for imports
+import sys
+from pathlib import Path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from tinyintent.config import settings
-from tinyintent.bridge.api_main import router_api
-from tinyintent.bridge.gen_client import async_ollama_client
-from tinyintent.bridge.logs.audit import initialize_audit_logger, get_audit_logger
-from tinyintent.helpers.sdk import helper_registry
-from tinyintent.data.episodes.episodes import agent_staging_storage
+from .api_main import router_api
+from .gen_client import async_ollama_client
+from .logs.audit import initialize_audit_logger, get_audit_logger
+from helpers.sdk import helper_registry
+from data.episodes.episodes import agent_staging_storage
 
 
 
@@ -73,7 +80,8 @@ async def rollback_watcher() -> None:
     error_rate_threshold = float(os.getenv("AGENT_ROLLBACK_ERROR_RATE", "0.2"))
     check_interval_seconds = 3600  # Check every hour
     
-    logger.info("Rollback watcher started", window_hours=window_hours, error_rate_threshold=error_rate_threshold)
+    if os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower() in ["debug", "info"]:
+        logger.info("Rollback watcher started", window_hours=window_hours, error_rate_threshold=error_rate_threshold)
     
     while True:
         try:
@@ -184,7 +192,8 @@ async def rollback_watcher() -> None:
             await asyncio.sleep(check_interval_seconds)
             
         except asyncio.CancelledError:
-            logger.info("Rollback watcher cancelled")
+            if os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower() in ["debug", "info"]:
+                logger.info("Rollback watcher cancelled")
             break
         except Exception as e:
             logger.error("Rollback watcher error", error=str(e))
@@ -207,8 +216,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             max_size_mb=settings.logging.audit_max_size_mb
         )
         
-        logger.info("TinyIntent Bridge starting up", version="2.0.0")
-        logger.info("Configuration loaded", environment=settings.environment)
+        # Only log startup details in debug mode
+        log_level = os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower()
+        if log_level in ["debug", "info"]:
+            logger.info("TinyIntent Bridge starting up", version="2.0.0")
+            logger.info("Configuration loaded", environment=settings.environment)
         
         # Validate critical settings
         if not settings.security.secret:
@@ -217,12 +229,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         
         # Initialize components
         await async_ollama_client.health_check()
-        logger.info("Ollama client initialized")
+        if log_level in ["debug", "info"]:
+            logger.info("Ollama client initialized")
         
         # M10.4: Start background rollback watcher for trusted agents
         import asyncio
         rollback_task = asyncio.create_task(rollback_watcher())
-        logger.info("Agent rollback watcher started")
+        if log_level in ["debug", "info"]:
+            logger.info("Agent rollback watcher started")
         
         yield
         
@@ -231,7 +245,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         raise
     finally:
         # Shutdown
-        logger.info("TinyIntent Bridge shutting down")
+        log_level = os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower()
+        if log_level in ["debug", "info"]:
+            logger.info("TinyIntent Bridge shutting down")
         
         # Cancel rollback watcher
         if rollback_task:
@@ -240,7 +256,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await rollback_task
             except asyncio.CancelledError:
                 pass
-            logger.info("Agent rollback watcher stopped")
+            if log_level in ["debug", "info"]:
+                logger.info("Agent rollback watcher stopped")
         
         await async_ollama_client.close()
 

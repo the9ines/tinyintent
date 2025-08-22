@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from ..security import verify_csrf_token
 
 router = APIRouter(prefix="/helpers", tags=["helpers"])
 
@@ -64,7 +65,7 @@ async def list_helpers():
     )
 
 @router.post("/reload")
-async def reload_helpers():
+async def reload_helpers(csrf_valid: bool = Depends(verify_csrf_token)):
     """Reload helper registry."""
     # TODO: Implement actual helper reload
     return {"status": "success", "message": "Helper registry reloaded"}
