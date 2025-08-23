@@ -241,7 +241,7 @@ class HelperRegistryEntry:
             
             # Import and verify provenance
             try:
-                from tinyintent.bridge.provenance import verify_provenance, log_verification_result
+                from bridge.provenance import verify_provenance, log_verification_result
                 
                 ok, reason, details = verify_provenance(helper_dir)
                 

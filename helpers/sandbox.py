@@ -251,18 +251,19 @@ class HelperSandbox:
         process = None
         
         try:
-            # M10.7: Use isolated workspace as working directory instead of original cwd
+            # M10.7: Create isolated workspace for temp files but execute from helper directory
             workspace = self.temp_workspace or self._create_temp_workspace()
             
-            # Start the process with capability-restricted environment in isolated workspace
+            # Start the process with capability-restricted environment in helper directory
+            # This allows relative paths like "./main.py" to work while still having workspace isolation
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                env=restricted_env,  # Use restricted environment
-                cwd=workspace,  # M10.7: Use isolated workspace, not original cwd
+                env=restricted_env,  # Use restricted environment with isolated temp dirs
+                cwd=cwd,  # Use original helper directory for command execution
                 preexec_fn=preexec_fn
             )
             

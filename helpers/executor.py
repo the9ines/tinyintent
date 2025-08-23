@@ -598,7 +598,7 @@ class HelperExecutor:
     
     def _log_audit(self, action: str, helper_id: str, input_data: Dict[str, Any], 
                    session_id: str = None, error: str = None, token_id: str = None,
-                   idempotency_key: str = None, execution_mode: str = None):
+                   idempotency_key: str = None, execution_mode: str = None, extra_data: Dict[str, Any] = None):
         """Log audit entry for helper execution with integrity chaining."""
         from datetime import datetime
         timestamp = datetime.utcnow().isoformat() + 'Z'
@@ -623,6 +623,8 @@ class HelperExecutor:
             audit_entry["idempotency_key"] = idempotency_key
         if execution_mode:
             audit_entry["execution_mode"] = execution_mode
+        if extra_data:
+            audit_entry["extra_data"] = extra_data
         
         try:
             audit_logger = get_audit_logger()
