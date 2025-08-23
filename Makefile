@@ -90,6 +90,30 @@ router-clean: ## Clean router build artifacts
 	@rm -f $(ROUTER_DIR)/*.mlmodel
 	@echo "$(GREEN)✅ Router artifacts cleaned$(NC)"
 
+analyze-edges: ## Analyze edge case patterns for router improvement
+	@echo "$(GREEN)Analyzing Edge Case Patterns...$(NC)"
+	@echo "=============================="
+	@$(PYTHON) scripts/analyze_edge_cases.py --hours 168 --export-candidates $(ROUTER_DIR)/data/edge_case_candidates.tsv
+	@echo "$(GREEN)✅ Edge case analysis completed!$(NC)"
+
+learn-edges: ## Edge case focused retraining pipeline
+	@echo "$(GREEN)Starting Edge Case Improvement Pipeline...$(NC)"
+	@echo "=========================================="
+	@$(PYTHON) scripts/edge_case_pipeline.py
+	@echo "$(GREEN)✅ Edge case pipeline completed!$(NC)"
+
+learn-edges-dry: ## Dry-run edge case pipeline without retraining
+	@echo "$(GREEN)Edge Case Pipeline (DRY RUN)...$(NC)"
+	@echo "==============================="
+	@$(PYTHON) scripts/edge_case_pipeline.py --dry-run
+	@echo "$(GREEN)✅ Edge case dry-run completed!$(NC)"
+
+learn-edges-force: ## Force edge case retraining regardless of thresholds
+	@echo "$(GREEN)Forced Edge Case Retraining...$(NC)"
+	@echo "============================="
+	@$(PYTHON) scripts/edge_case_pipeline.py --force
+	@echo "$(GREEN)✅ Forced edge case retraining completed!$(NC)"
+
 ##@ Learning Loop (M5.3)
 learn: ## Automated learning loop: export episodes → train → evaluate → validate artifacts
 	@echo "$(GREEN)Starting TinyIntent Learning Loop...$(NC)"
@@ -207,4 +231,4 @@ status: ## Show project status
 	@echo "Recent activity:"
 	@ls -la $(DATA_DIR)/episodes/ 2>/dev/null || echo "No episode data"
 
-.PHONY: help bridgesrv doctor router-train router-eval router-clean learn promote autopilot autopilot-dry export-episodes export-summary clean-data backup-data lint format test clean status
+.PHONY: help bridgesrv doctor router-train router-eval router-clean analyze-edges learn-edges learn-edges-dry learn-edges-force learn promote autopilot autopilot-dry export-episodes export-summary clean-data backup-data lint format test clean status
