@@ -126,7 +126,7 @@ monitor-continuous: ## Run continuous router performance monitoring
 	@echo "$(YELLOW)Press Ctrl+C to stop monitoring$(NC)"
 	@$(PYTHON) scripts/monitor_router_performance.py --continuous
 
-##@ Learning Loop (M5.3)
+##@ Learning System (M5.3)
 learn: ## Automated learning loop: export episodes → train → evaluate → validate artifacts
 	@echo "$(GREEN)Starting TinyIntent Learning Loop...$(NC)"
 	@echo "=================================="
@@ -178,6 +178,23 @@ autopilot-dry: ## Run autopilot in dry-run mode (no promotion)
 	@echo "=========================================="
 	@$(PYTHON) scripts/autopilot.py --dry-run
 	@echo "$(GREEN)✅ Autopilot dry run completed!$(NC)"
+
+autopilot-enable: ## Enable automatic daily autopilot runs
+	@echo "$(GREEN)Enabling TinyIntent Autopilot...$(NC)"
+	@$(PYTHON) scripts/autopilot_control.py enable
+
+autopilot-disable: ## Disable automatic daily autopilot runs
+	@echo "$(YELLOW)Disabling TinyIntent Autopilot...$(NC)"
+	@$(PYTHON) scripts/autopilot_control.py disable
+
+autopilot-status: ## Show autopilot scheduling status
+	@$(PYTHON) scripts/autopilot_control.py status
+
+learning-monitor: ## Show comprehensive learning system dashboard
+	@$(PYTHON) scripts/learning_monitor.py
+
+learning-status: ## Show compact learning system status
+	@$(PYTHON) scripts/learning_monitor.py --compact
 
 export-episodes: ## Export episodes to training data
 	@echo "$(GREEN)Exporting episodes to training data...$(NC)"

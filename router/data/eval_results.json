@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-08-20T23:36:57.154708",
+  "timestamp": "2025-08-23T09:44:34.792302",
   "model_path": "/Users/oberfelder/Projects/tinyintent/router/SmallIntent.mlmodel",
   "test_data_path": "/Users/oberfelder/Projects/tinyintent/router/data/intents_test.tsv",
   "test_sample_count": 22,
@@ -8,46 +8,48 @@
     "act": 1
   },
   "performance": {
-    "accuracy": 0.7727272727272727,
-    "precision_macro": 0.8529411764705883,
-    "recall_macro": 0.75,
-    "f1_macro": 0.7471264367816092,
+    "accuracy": 0.9090909090909091,
+    "precision_macro": 0.9166666666666667,
+    "recall_macro": 0.9166666666666667,
+    "f1_macro": 0.9090909090909091,
     "per_class_metrics": {
       "gen": {
-        "precision": 0.7058823529411765,
-        "recall": 1.0,
-        "f1": 0.8275862068965517,
+        "precision": 1.0,
+        "recall": 0.8333333333333334,
+        "f1": 0.9090909090909091,
         "support": 12
       },
       "act": {
-        "precision": 1.0,
-        "recall": 0.5,
-        "f1": 0.6666666666666666,
+        "precision": 0.8333333333333334,
+        "recall": 1.0,
+        "f1": 0.9090909090909091,
         "support": 10
       }
     },
     "confusion_matrix": {
-      "true_negatives": 12,
-      "false_positives": 0,
-      "false_negatives": 5,
-      "true_positives": 5
+      "true_negatives": 10,
+      "false_positives": 2,
+      "false_negatives": 0,
+      "true_positives": 10
     },
-    "roc_auc": 0.125,
-    "pr_auc": 0.3167912389468117,
+    "roc_auc": 0.6666666666666666,
+    "pr_auc": 0.5950424523876537,
     "latency": {
-      "mean_ms": 1.0580799796364524,
-      "p95_ms": 1.211857795715332,
-      "max_ms": 2.9981136322021484,
-      "std_ms": 0.4320422387270333
+      "mean_ms": 1.0586651888760654,
+      "p95_ms": 1.208996772766113,
+      "max_ms": 3.2503604888916016,
+      "std_ms": 0.48414036960350193
     },
     "calibration": {
-      "ece": 0.23846342346884986,
+      "ece": 0.3294969309460033,
       "reliability_diagram": {
         "fraction_of_positives": [
-          0.45454545454545453
+          0.35714285714285715,
+          0.625
         ],
         "mean_predicted_value": [
-          0.5342638086188923
+          0.5596259108611515,
+          0.6145381033420563
         ]
       },
       "calibration_bins": [
@@ -94,18 +96,18 @@
         {
           "bin_lower": 0.5,
           "bin_upper": 0.6000000000000001,
-          "bin_accuracy": 0.7727272727272727,
-          "bin_confidence": 0.5342638492584229,
-          "bin_count": 22,
-          "proportion": 1.0
+          "bin_accuracy": 0.8571428571428571,
+          "bin_confidence": 0.5596259236335754,
+          "bin_count": 14,
+          "proportion": 0.6363636363636364
         },
         {
           "bin_lower": 0.6000000000000001,
           "bin_upper": 0.7000000000000001,
-          "bin_accuracy": 0.0,
-          "bin_confidence": 0.0,
-          "bin_count": 0,
-          "proportion": 0.0
+          "bin_accuracy": 1.0,
+          "bin_confidence": 0.6145380735397339,
+          "bin_count": 8,
+          "proportion": 0.36363636363636365
         },
         {
           "bin_lower": 0.7000000000000001,
@@ -132,18 +134,18 @@
           "proportion": 0.0
         }
       ],
-      "mean_confidence": 0.5342638492584229,
-      "confidence_std": 0.02251633256673813
+      "mean_confidence": 0.579594075679779,
+      "confidence_std": 0.035582106560468674
     },
     "sample_count": 22
   },
   "promotion": {
     "promotion_eligible": false,
     "checks": {
-      "accuracy_check": false,
+      "accuracy_check": true,
       "latency_check": true,
       "calibration_check": false,
-      "f1_check": false
+      "f1_check": true
     },
     "thresholds": {
       "min_accuracy": 0.85,
@@ -156,5 +158,1340 @@
   "model_info": {
     "size_mb": 0.0,
     "architecture": "transformer_classification_coreml"
+  },
+  "edge_case_evaluation": {
+    "timestamp": "2025-08-23T09:44:36.517265",
+    "total_edge_cases": 55,
+    "overall_accuracy": 0.32727272727272727,
+    "avg_confidence": 0.6244648098945618,
+    "edge_case_analysis": {
+      "misclassified_question": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6552256941795349,
+        "confidence_range": {
+          "min": 0.6552256941795349,
+          "max": 0.6552256941795349
+        }
+      },
+      "misclassified_command": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.642264187335968,
+        "confidence_range": {
+          "min": 0.642264187335968,
+          "max": 0.642264187335968
+        }
+      },
+      "implicit_command": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6385535597801208,
+        "confidence_range": {
+          "min": 0.6385535597801208,
+          "max": 0.6385535597801208
+        }
+      },
+      "imperative_question": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.628065288066864,
+        "confidence_range": {
+          "min": 0.628065288066864,
+          "max": 0.628065288066864
+        }
+      },
+      "ambiguous_show": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.5823723077774048,
+        "confidence_range": {
+          "min": 0.5823723077774048,
+          "max": 0.5823723077774048
+        }
+      },
+      "polite_question": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6338636875152588,
+        "confidence_range": {
+          "min": 0.6338636875152588,
+          "max": 0.6338636875152588
+        }
+      },
+      "conversational_command": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6118749380111694,
+        "confidence_range": {
+          "min": 0.6118749380111694,
+          "max": 0.6118749380111694
+        }
+      },
+      "hypothetical_question": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6188380122184753,
+        "confidence_range": {
+          "min": 0.6188380122184753,
+          "max": 0.6188380122184753
+        }
+      },
+      "status_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6270096302032471,
+        "confidence_range": {
+          "min": 0.6270096302032471,
+          "max": 0.6270096302032471
+        }
+      },
+      "capability_question": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6405234336853027,
+        "confidence_range": {
+          "min": 0.6405234336853027,
+          "max": 0.6405234336853027
+        }
+      },
+      "investigative_request": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.5295295119285583,
+        "confidence_range": {
+          "min": 0.5295295119285583,
+          "max": 0.5295295119285583
+        }
+      },
+      "technical_explanation": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6446726322174072,
+        "confidence_range": {
+          "min": 0.6446726322174072,
+          "max": 0.6446726322174072
+        }
+      },
+      "conditional_question": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6210238933563232,
+        "confidence_range": {
+          "min": 0.6210238933563232,
+          "max": 0.6210238933563232
+        }
+      },
+      "help_request": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.616358757019043,
+        "confidence_range": {
+          "min": 0.616358757019043,
+          "max": 0.616358757019043
+        }
+      },
+      "procedural_question": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6411977410316467,
+        "confidence_range": {
+          "min": 0.6411977410316467,
+          "max": 0.6411977410316467
+        }
+      },
+      "information_command": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6328715085983276,
+        "confidence_range": {
+          "min": 0.6328715085983276,
+          "max": 0.6328715085983276
+        }
+      },
+      "status_question": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6546740531921387,
+        "confidence_range": {
+          "min": 0.6546740531921387,
+          "max": 0.6546740531921387
+        }
+      },
+      "display_request": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6140179634094238,
+        "confidence_range": {
+          "min": 0.6140179634094238,
+          "max": 0.6140179634094238
+        }
+      },
+      "advisory_question": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6213973164558411,
+        "confidence_range": {
+          "min": 0.6213973164558411,
+          "max": 0.6213973164558411
+        }
+      },
+      "permission_request": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.5993385910987854,
+        "confidence_range": {
+          "min": 0.5993385910987854,
+          "max": 0.5993385910987854
+        }
+      },
+      "diagnostic_question": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6327864527702332,
+        "confidence_range": {
+          "min": 0.6327864527702332,
+          "max": 0.6327864527702332
+        }
+      },
+      "follow_up_request": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6286923885345459,
+        "confidence_range": {
+          "min": 0.6286923885345459,
+          "max": 0.6286923885345459
+        }
+      },
+      "configuration_advice": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.630087673664093,
+        "confidence_range": {
+          "min": 0.630087673664093,
+          "max": 0.630087673664093
+        }
+      },
+      "best_practice_question": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6345999240875244,
+        "confidence_range": {
+          "min": 0.6345999240875244,
+          "max": 0.6345999240875244
+        }
+      },
+      "educational_display": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.5712434649467468,
+        "confidence_range": {
+          "min": 0.5712434649467468,
+          "max": 0.5712434649467468
+        }
+      },
+      "tutorial_request": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.622832179069519,
+        "confidence_range": {
+          "min": 0.622832179069519,
+          "max": 0.622832179069519
+        }
+      },
+      "interpretation_help": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6452875733375549,
+        "confidence_range": {
+          "min": 0.6452875733375549,
+          "max": 0.6452875733375549
+        }
+      },
+      "error_explanation": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.6470180153846741,
+        "confidence_range": {
+          "min": 0.6470180153846741,
+          "max": 0.6470180153846741
+        }
+      },
+      "health_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6296891570091248,
+        "confidence_range": {
+          "min": 0.6296891570091248,
+          "max": 0.6296891570091248
+        }
+      },
+      "performance_check": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6469064354896545,
+        "confidence_range": {
+          "min": 0.6469064354896545,
+          "max": 0.6469064354896545
+        }
+      },
+      "backup_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6414223313331604,
+        "confidence_range": {
+          "min": 0.6414223313331604,
+          "max": 0.6414223313331604
+        }
+      },
+      "network_investigation": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.5636181235313416,
+        "confidence_range": {
+          "min": 0.5636181235313416,
+          "max": 0.5636181235313416
+        }
+      },
+      "container_status": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6482437252998352,
+        "confidence_range": {
+          "min": 0.6482437252998352,
+          "max": 0.6482437252998352
+        }
+      },
+      "api_investigation": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.5835593938827515,
+        "confidence_range": {
+          "min": 0.5835593938827515,
+          "max": 0.5835593938827515
+        }
+      },
+      "validation_request": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6084486246109009,
+        "confidence_range": {
+          "min": 0.6084486246109009,
+          "max": 0.6084486246109009
+        }
+      },
+      "timestamp_query": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6070809364318848,
+        "confidence_range": {
+          "min": 0.6070809364318848,
+          "max": 0.6070809364318848
+        }
+      },
+      "usage_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6443929672241211,
+        "confidence_range": {
+          "min": 0.6443929672241211,
+          "max": 0.6443929672241211
+        }
+      },
+      "security_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6285214424133301,
+        "confidence_range": {
+          "min": 0.6285214424133301,
+          "max": 0.6285214424133301
+        }
+      },
+      "user_count_query": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6044573187828064,
+        "confidence_range": {
+          "min": 0.6044573187828064,
+          "max": 0.6044573187828064
+        }
+      },
+      "task_status_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6555014848709106,
+        "confidence_range": {
+          "min": 0.6555014848709106,
+          "max": 0.6555014848709106
+        }
+      },
+      "config_display": {
+        "sample_count": 1,
+        "accuracy": 1.0,
+        "avg_confidence": 0.5799209475517273,
+        "confidence_range": {
+          "min": 0.5799209475517273,
+          "max": 0.5799209475517273
+        }
+      },
+      "service_performance": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6437773108482361,
+        "confidence_range": {
+          "min": 0.6437773108482361,
+          "max": 0.6437773108482361
+        }
+      },
+      "pipeline_status": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6363531351089478,
+        "confidence_range": {
+          "min": 0.6363531351089478,
+          "max": 0.6363531351089478
+        }
+      },
+      "report_request": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6136417984962463,
+        "confidence_range": {
+          "min": 0.6136417984962463,
+          "max": 0.6136417984962463
+        }
+      },
+      "queue_status": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6390605568885803,
+        "confidence_range": {
+          "min": 0.6390605568885803,
+          "max": 0.6390605568885803
+        }
+      },
+      "change_history": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6534586548805237,
+        "confidence_range": {
+          "min": 0.6534586548805237,
+          "max": 0.6534586548805237
+        }
+      },
+      "load_balancer_status": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6272950768470764,
+        "confidence_range": {
+          "min": 0.6272950768470764,
+          "max": 0.6272950768470764
+        }
+      },
+      "infrastructure_health": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6382154226303101,
+        "confidence_range": {
+          "min": 0.6382154226303101,
+          "max": 0.6382154226303101
+        }
+      },
+      "dashboard_updates": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.5838857293128967,
+        "confidence_range": {
+          "min": 0.5838857293128967,
+          "max": 0.5838857293128967
+        }
+      },
+      "dependency_visualization": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.601359486579895,
+        "confidence_range": {
+          "min": 0.601359486579895,
+          "max": 0.601359486579895
+        }
+      },
+      "test_status": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6460695266723633,
+        "confidence_range": {
+          "min": 0.6460695266723633,
+          "max": 0.6460695266723633
+        }
+      },
+      "archiving_status": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6531822681427002,
+        "confidence_range": {
+          "min": 0.6531822681427002,
+          "max": 0.6531822681427002
+        }
+      },
+      "compliance_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6293761134147644,
+        "confidence_range": {
+          "min": 0.6293761134147644,
+          "max": 0.6293761134147644
+        }
+      },
+      "disaster_recovery_status": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6461811661720276,
+        "confidence_range": {
+          "min": 0.6461811661720276,
+          "max": 0.6461811661720276
+        }
+      },
+      "app_performance_inquiry": {
+        "sample_count": 1,
+        "accuracy": 0.0,
+        "avg_confidence": 0.6257240772247314,
+        "confidence_range": {
+          "min": 0.6257240772247314,
+          "max": 0.6257240772247314
+        }
+      }
+    },
+    "detailed_results": [
+      {
+        "text": "How does quantum computing work",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6552256941795349,
+        "correct": true,
+        "edge_case_type": "misclassified_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How do I close my positions",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.642264187335968,
+        "correct": false,
+        "edge_case_type": "misclassified_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's my trading bot status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6385535597801208,
+        "correct": false,
+        "edge_case_type": "implicit_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me how machine learning works",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.628065288066864,
+        "correct": true,
+        "edge_case_type": "imperative_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me how to cook pasta",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.5823723077774048,
+        "correct": true,
+        "edge_case_type": "ambiguous_show",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you explain artificial intelligence",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6338636875152588,
+        "correct": true,
+        "edge_case_type": "polite_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How about checking my bot status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6118749380111694,
+        "correct": false,
+        "edge_case_type": "conversational_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What happens if I stop the trading bot",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6188380122184753,
+        "correct": true,
+        "edge_case_type": "hypothetical_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about my current positions",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6270096302032471,
+        "correct": false,
+        "edge_case_type": "status_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How can I monitor system logs",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6405234336853027,
+        "correct": false,
+        "edge_case_type": "capability_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me what's in the error logs",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5295295119285583,
+        "correct": false,
+        "edge_case_type": "investigative_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Explain how the trading algorithm works",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6446726322174072,
+        "correct": true,
+        "edge_case_type": "technical_explanation",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What would happen if I restart the server",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6210238933563232,
+        "correct": true,
+        "edge_case_type": "conditional_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you help me understand neural networks",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.616358757019043,
+        "correct": true,
+        "edge_case_type": "help_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How do you check database connections",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6411977410316467,
+        "correct": false,
+        "edge_case_type": "procedural_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me the status of all services",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6328715085983276,
+        "correct": false,
+        "edge_case_type": "information_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the current memory usage",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6546740531921387,
+        "correct": false,
+        "edge_case_type": "status_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me recent system alerts",
+        "expected_label": "act",
+        "predicted_label": "act",
+        "confidence": 0.6140179634094238,
+        "correct": true,
+        "edge_case_type": "display_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How often should I backup the database",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6213973164558411,
+        "correct": true,
+        "edge_case_type": "advisory_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can I get the server performance metrics",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5993385910987854,
+        "correct": false,
+        "edge_case_type": "permission_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What kind of errors are in the logs",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6327864527702332,
+        "correct": false,
+        "edge_case_type": "diagnostic_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me more about blockchain technology",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6286923885345459,
+        "correct": true,
+        "edge_case_type": "follow_up_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How should I configure the load balancer",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.630087673664093,
+        "correct": true,
+        "edge_case_type": "configuration_advice",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the best way to monitor network traffic",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6345999240875244,
+        "correct": true,
+        "edge_case_type": "best_practice_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me how SSL certificates work",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.5712434649467468,
+        "correct": true,
+        "edge_case_type": "educational_display",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you walk me through the deployment process",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.622832179069519,
+        "correct": true,
+        "edge_case_type": "tutorial_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How do I interpret these performance graphs",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6452875733375549,
+        "correct": true,
+        "edge_case_type": "interpretation_help",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What does this error message mean",
+        "expected_label": "gen",
+        "predicted_label": "gen",
+        "confidence": 0.6470180153846741,
+        "correct": true,
+        "edge_case_type": "error_explanation",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about the current system health",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6296891570091248,
+        "correct": false,
+        "edge_case_type": "health_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the database performance looking",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6469064354896545,
+        "correct": false,
+        "edge_case_type": "performance_check",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What can you tell me about recent backups",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6414223313331604,
+        "correct": false,
+        "edge_case_type": "backup_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me what's happening with the network",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5636181235313416,
+        "correct": false,
+        "edge_case_type": "network_investigation",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How are the containers running",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6482437252998352,
+        "correct": false,
+        "edge_case_type": "container_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's going on with the API responses",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5835593938827515,
+        "correct": false,
+        "edge_case_type": "api_investigation",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you check if the SSL certificates are valid",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6084486246109009,
+        "correct": false,
+        "edge_case_type": "validation_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How long since the last system backup",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6070809364318848,
+        "correct": false,
+        "edge_case_type": "timestamp_query",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the current disk usage situation",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6443929672241211,
+        "correct": false,
+        "edge_case_type": "usage_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about any recent security alerts",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6285214424133301,
+        "correct": false,
+        "edge_case_type": "security_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How many users are currently logged in",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6044573187828064,
+        "correct": false,
+        "edge_case_type": "user_count_query",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the status of the automated tasks",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6555014848709106,
+        "correct": false,
+        "edge_case_type": "task_status_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me the current system configuration",
+        "expected_label": "act",
+        "predicted_label": "act",
+        "confidence": 0.5799209475517273,
+        "correct": true,
+        "edge_case_type": "config_display",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How are the microservices performing",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6437773108482361,
+        "correct": false,
+        "edge_case_type": "service_performance",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the latest on the deployment pipeline",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6363531351089478,
+        "correct": false,
+        "edge_case_type": "pipeline_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you give me a network connectivity report",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6136417984962463,
+        "correct": false,
+        "edge_case_type": "report_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the message queue processing going",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6390605568885803,
+        "correct": false,
+        "edge_case_type": "queue_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What are the recent changes to the system",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6534586548805237,
+        "correct": false,
+        "edge_case_type": "change_history",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about the current load balancer status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6272950768470764,
+        "correct": false,
+        "edge_case_type": "load_balancer_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the cloud infrastructure holding up",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6382154226303101,
+        "correct": false,
+        "edge_case_type": "infrastructure_health",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's new with the monitoring dashboards",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5838857293128967,
+        "correct": false,
+        "edge_case_type": "dashboard_updates",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you show me the service dependencies",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.601359486579895,
+        "correct": false,
+        "edge_case_type": "dependency_visualization",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How are the automated tests running",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6460695266723633,
+        "correct": false,
+        "edge_case_type": "test_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the current state of data archiving",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6531822681427002,
+        "correct": false,
+        "edge_case_type": "archiving_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about the system's compliance status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6293761134147644,
+        "correct": false,
+        "edge_case_type": "compliance_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the disaster recovery setup looking",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6461811661720276,
+        "correct": false,
+        "edge_case_type": "disaster_recovery_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What about the application performance metrics",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6257240772247314,
+        "correct": false,
+        "edge_case_type": "app_performance_inquiry",
+        "source": "iPhone_Shortcut"
+      }
+    ],
+    "improvement_candidates": [
+      {
+        "text": "How do I close my positions",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.642264187335968,
+        "correct": false,
+        "edge_case_type": "misclassified_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's my trading bot status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6385535597801208,
+        "correct": false,
+        "edge_case_type": "implicit_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How about checking my bot status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6118749380111694,
+        "correct": false,
+        "edge_case_type": "conversational_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about my current positions",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6270096302032471,
+        "correct": false,
+        "edge_case_type": "status_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How can I monitor system logs",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6405234336853027,
+        "correct": false,
+        "edge_case_type": "capability_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me what's in the error logs",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5295295119285583,
+        "correct": false,
+        "edge_case_type": "investigative_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How do you check database connections",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6411977410316467,
+        "correct": false,
+        "edge_case_type": "procedural_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me the status of all services",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6328715085983276,
+        "correct": false,
+        "edge_case_type": "information_command",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the current memory usage",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6546740531921387,
+        "correct": false,
+        "edge_case_type": "status_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can I get the server performance metrics",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5993385910987854,
+        "correct": false,
+        "edge_case_type": "permission_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What kind of errors are in the logs",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6327864527702332,
+        "correct": false,
+        "edge_case_type": "diagnostic_question",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about the current system health",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6296891570091248,
+        "correct": false,
+        "edge_case_type": "health_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the database performance looking",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6469064354896545,
+        "correct": false,
+        "edge_case_type": "performance_check",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What can you tell me about recent backups",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6414223313331604,
+        "correct": false,
+        "edge_case_type": "backup_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Show me what's happening with the network",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5636181235313416,
+        "correct": false,
+        "edge_case_type": "network_investigation",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How are the containers running",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6482437252998352,
+        "correct": false,
+        "edge_case_type": "container_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's going on with the API responses",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5835593938827515,
+        "correct": false,
+        "edge_case_type": "api_investigation",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you check if the SSL certificates are valid",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6084486246109009,
+        "correct": false,
+        "edge_case_type": "validation_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How long since the last system backup",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6070809364318848,
+        "correct": false,
+        "edge_case_type": "timestamp_query",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the current disk usage situation",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6443929672241211,
+        "correct": false,
+        "edge_case_type": "usage_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about any recent security alerts",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6285214424133301,
+        "correct": false,
+        "edge_case_type": "security_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How many users are currently logged in",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6044573187828064,
+        "correct": false,
+        "edge_case_type": "user_count_query",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the status of the automated tasks",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6555014848709106,
+        "correct": false,
+        "edge_case_type": "task_status_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How are the microservices performing",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6437773108482361,
+        "correct": false,
+        "edge_case_type": "service_performance",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the latest on the deployment pipeline",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6363531351089478,
+        "correct": false,
+        "edge_case_type": "pipeline_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you give me a network connectivity report",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6136417984962463,
+        "correct": false,
+        "edge_case_type": "report_request",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the message queue processing going",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6390605568885803,
+        "correct": false,
+        "edge_case_type": "queue_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What are the recent changes to the system",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6534586548805237,
+        "correct": false,
+        "edge_case_type": "change_history",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about the current load balancer status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6272950768470764,
+        "correct": false,
+        "edge_case_type": "load_balancer_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the cloud infrastructure holding up",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6382154226303101,
+        "correct": false,
+        "edge_case_type": "infrastructure_health",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's new with the monitoring dashboards",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.5838857293128967,
+        "correct": false,
+        "edge_case_type": "dashboard_updates",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Can you show me the service dependencies",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.601359486579895,
+        "correct": false,
+        "edge_case_type": "dependency_visualization",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How are the automated tests running",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6460695266723633,
+        "correct": false,
+        "edge_case_type": "test_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What's the current state of data archiving",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6531822681427002,
+        "correct": false,
+        "edge_case_type": "archiving_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "Tell me about the system's compliance status",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6293761134147644,
+        "correct": false,
+        "edge_case_type": "compliance_inquiry",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "How's the disaster recovery setup looking",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6461811661720276,
+        "correct": false,
+        "edge_case_type": "disaster_recovery_status",
+        "source": "iPhone_Shortcut"
+      },
+      {
+        "text": "What about the application performance metrics",
+        "expected_label": "act",
+        "predicted_label": "gen",
+        "confidence": 0.6257240772247314,
+        "correct": false,
+        "edge_case_type": "app_performance_inquiry",
+        "source": "iPhone_Shortcut"
+      }
+    ]
   }
 }

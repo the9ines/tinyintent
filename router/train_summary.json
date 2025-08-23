@@ -1,6 +1,6 @@
 {
-  "training_id": "22fa8ad8",
-  "timestamp": "2025-08-22T20:40:57.579466",
+  "training_id": "9661ab92",
+  "timestamp": "2025-08-23T10:03:09.789236",
   "status": "completed",
   "version": "2.0",
   "model": {
@@ -11,13 +11,13 @@
     "num_labels": 2
   },
   "dataset": {
-    "total_samples": 376,
-    "train_samples": 225,
-    "val_samples": 75,
-    "cal_samples": 76,
+    "total_samples": 411,
+    "train_samples": 246,
+    "val_samples": 82,
+    "cal_samples": 83,
     "label_distribution": {
-      "gen": 194,
-      "act": 182
+      "gen": 206,
+      "act": 205
     }
   },
   "training": {
@@ -29,15 +29,15 @@
     "training_duration_minutes": null
   },
   "performance": {
-    "validation_accuracy": 1.0,
-    "validation_loss": 0.4704737961292267,
+    "validation_accuracy": 0.975609756097561,
+    "validation_loss": 0.16792209446430206,
     "precision": null,
     "recall": null,
     "f1_score": null,
     "calibration": {
-      "temperature": 0.1081945194419979,
-      "pre_calibration_ece": 0.35183490420642655,
-      "post_calibration_ece": 0.35183490420642655,
+      "temperature": 0.6365497451006927,
+      "pre_calibration_ece": 0.06856600994087131,
+      "post_calibration_ece": 0.06856600994087131,
       "method": "temperature_scaling"
     }
   },
@@ -62,33 +62,33 @@
   "sample_predictions": [
     {
       "text": "Generate a summary report",
-      "predicted_label": "act",
-      "raw_confidence": 0.5050246119499207,
-      "calibrated_confidence": 0.5463089346885681
+      "predicted_label": "gen",
+      "raw_confidence": 0.8942136168479919,
+      "calibrated_confidence": 0.96621173620224
     },
     {
       "text": "Close all trading positions",
       "predicted_label": "act",
-      "raw_confidence": 0.5848727226257324,
-      "calibrated_confidence": 0.9596295952796936
+      "raw_confidence": 0.8996318578720093,
+      "calibrated_confidence": 0.9690922498703003
     },
     {
       "text": "Write me a poem",
       "predicted_label": "gen",
-      "raw_confidence": 0.5698986053466797,
-      "calibrated_confidence": 0.9309398531913757
+      "raw_confidence": 0.8933433294296265,
+      "calibrated_confidence": 0.9657383561134338
     },
     {
       "text": "Restart the server",
       "predicted_label": "act",
-      "raw_confidence": 0.598608136177063,
-      "calibrated_confidence": 0.9757309556007385
+      "raw_confidence": 0.898460328578949,
+      "calibrated_confidence": 0.9684791564941406
     },
     {
       "text": "Emergency stop all bots",
       "predicted_label": "act",
-      "raw_confidence": 0.6088619232177734,
-      "calibrated_confidence": 0.9835386276245117
+      "raw_confidence": 0.9002945423126221,
+      "calibrated_confidence": 0.9694368839263916
     }
   ]
 }

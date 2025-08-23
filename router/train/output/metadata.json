@@ -1,5 +1,5 @@
 {
-  "training_id": "22fa8ad8",
+  "training_id": "9661ab92",
   "model_name": "google/electra-small-discriminator",
   "num_labels": 2,
   "label_map": {
@@ -8,15 +8,15 @@
   },
   "vocab_size": 30522,
   "max_length": 128,
-  "validation_accuracy": 1.0,
+  "validation_accuracy": 0.975609756097561,
   "calibration": {
-    "temperature": 0.1081945194419979,
-    "pre_calibration_ece": 0.35183490420642655,
-    "post_calibration_ece": 0.35183490420642655,
+    "temperature": 0.6365497451006927,
+    "pre_calibration_ece": 0.06856600994087131,
+    "post_calibration_ece": 0.06856600994087131,
     "calibration_method": "temperature_scaling"
   },
   "calibration_file": "calibration.pkl",
-  "trained_at": "2025-08-22T20:40:57.579264",
+  "trained_at": "2025-08-23T10:03:09.789045",
   "onnx_path": "/Users/oberfelder/Projects/tinyintent/router/SmallIntent.onnx",
   "onnx_size_mb": 51.92492198944092
 }

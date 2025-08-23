@@ -21,7 +21,7 @@ class EpisodeExporter:
         self.data_dir = data_dir or Path(__file__).parent.parent / "data" / "episodes"
         self.router_dir = router_dir or Path(__file__).parent.parent / "router" / "data"
         
-        self.db_file = self.data_dir / "events.db"
+        self.db_file = self.data_dir / "router_decisions.db"
         self.output_file = self.router_dir / "intents.tsv"
         
         # Create router data directory if it doesn't exist
@@ -153,27 +153,23 @@ class EpisodeExporter:
         return episodes
     
     def _extract_episodes_fallback(self) -> List[Dict]:
-        """Fallback method using only episodes table."""
+        """Fallback method using edge_cases table."""
         try:
             with sqlite3.connect(self.db_file) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute("""
                     SELECT 
                         session_id,
-                        helper_id,
-                        input_hash,
+                        text,
+                        predicted_route as route_final,
+                        predicted_confidence as confidence,
+                        predicted_intent as intent,
                         timestamp,
-                        'act' as route_final,
-                        CASE 
-                            WHEN helper_id = 'bot_guard' THEN 'Show trading positions'
-                            WHEN helper_id = 'log_tailer' THEN 'Show error logs'
-                            WHEN helper_id = 'ssh_ops' THEN 'Check system status'
-                            ELSE 'Unknown operation'
-                        END as text
-                    FROM episodes
-                    WHERE status_code = 200 
-                    AND action = 'preview'
-                    AND success = 1
+                        actual_route,
+                        user_correction,
+                        correction_route
+                    FROM edge_cases
+                    WHERE predicted_confidence > 0.0
                     ORDER BY timestamp DESC
                 """)
                 
@@ -405,7 +401,7 @@ class EpisodeExporter:
     
     def _write_enhanced_training_data(self, training_pairs: List[Tuple[str, str, str]], 
                                      append: bool) -> int:
-        """Write enhanced training pairs with label_source to TSV file. M7.4"""
+        """Write training pairs to TSV file in 2-column format for compatibility. M7.4"""
         if not training_pairs:
             print("No new training data to export")
             return 0
@@ -415,9 +411,9 @@ class EpisodeExporter:
         try:
             with open(self.output_file, mode, encoding='utf-8') as f:
                 for text, label, label_source in training_pairs:
-                    # Enhanced format: text<TAB>label<TAB>label_source
-                    # This allows the training script to prioritize override samples
-                    f.write(f"{text}\t{label}\t{label_source}\n")
+                    # Standard format: text<TAB>label
+                    # Compatible with existing training script
+                    f.write(f"{text}\t{label}\n")
             
             return len(training_pairs)
             
