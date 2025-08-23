@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Weather Helper Output Schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"],
+      "description": "Operation status"
+    },
+    "location": {
+      "type": "string",
+      "description": "Resolved location name"
+    },
+    "coordinates": {
+      "type": "object",
+      "properties": {
+        "latitude": {"type": "number"},
+        "longitude": {"type": "number"}
+      }
+    },
+    "current": {
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "description": "Current temperature"
+        },
+        "feels_like": {
+          "type": "number", 
+          "description": "Apparent temperature"
+        },
+        "humidity": {
+          "type": "integer",
+          "description": "Relative humidity percentage"
+        },
+        "description": {
+          "type": "string",
+          "description": "Weather condition description"
+        },
+        "wind_speed": {
+          "type": "number",
+          "description": "Wind speed"
+        },
+        "units": {
+          "type": "string",
+          "description": "Units used for temperature"
+        }
+      }
+    },
+    "forecast": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "time": {"type": "string"},
+          "temperature": {"type": "number"},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable weather summary"
+    },
+    "api_source": {
+      "type": "string",
+      "description": "API source used for weather data"
+    },
+    "error_code": {
+      "type": "string",
+      "description": "Error code if status is error"
+    },
+    "error_message": {
+      "type": "string", 
+      "description": "Error details if status is error"
+    }
+  },
+  "required": ["status"],
+  "additionalProperties": false
+}

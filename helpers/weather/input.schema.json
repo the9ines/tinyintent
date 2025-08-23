@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Weather Helper Input Schema",
+  "type": "object",
+  "properties": {
+    "location": {
+      "type": "string",
+      "description": "Location as ZIP code, city name, or coordinates (lat,lon)",
+      "examples": ["78624", "Austin, TX", "30.2672,-97.7431"]
+    },
+    "units": {
+      "type": "string",
+      "enum": ["imperial", "metric"],
+      "default": "imperial",
+      "description": "Temperature units (imperial=Fahrenheit, metric=Celsius)"
+    },
+    "include_forecast": {
+      "type": "boolean",
+      "default": false,
+      "description": "Include 24-hour forecast in response"
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["current", "forecast"],
+      "default": "current",
+      "description": "Type of weather operation to perform"
+    }
+  },
+  "required": ["location"],
+  "additionalProperties": false
+}

@@ -1,0 +1,38 @@
+purpose: "Retrieve current weather data for locations using free APIs"
+
+schema:
+  input: "./input.schema.json"
+  output: "./output.schema.json"
+
+capabilities:
+  preview: true
+  execute: true
+  emergency_close: false
+
+sandbox:
+  commands:
+    - "/usr/bin/python3"
+    - "./main.py"
+  network: "enabled"  # Required for weather API calls
+  timeouts:
+    - name: "default"
+      seconds: 10
+    - name: "execute"
+      seconds: 15
+  cpu:
+    max_ms: 2000  # Allow more CPU for API calls
+  mem:
+    max_mb: 64    # More memory for JSON processing
+
+environment:
+  required: []
+  optional:
+    - "DEFAULT_UNITS"  # imperial or metric
+    - "WEATHER_TIMEOUT"
+    - "MAX_FORECAST_DAYS"
+
+metadata:
+  version: "1.0.0"
+  author: "TinyIntent"
+  risk_level: "low"
+  audit_required: true
