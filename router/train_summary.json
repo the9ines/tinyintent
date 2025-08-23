@@ -1,6 +1,8 @@
 {
-  "timestamp": "2025-08-20T22:12:38.807380",
+  "training_id": "22fa8ad8",
+  "timestamp": "2025-08-22T20:40:57.579466",
   "status": "completed",
+  "version": "2.0",
   "model": {
     "name": "google/electra-small-discriminator",
     "architecture": "transformer_classification",
@@ -9,13 +11,13 @@
     "num_labels": 2
   },
   "dataset": {
-    "total_samples": 30,
-    "train_samples": 18,
-    "val_samples": 6,
-    "cal_samples": 6,
+    "total_samples": 376,
+    "train_samples": 225,
+    "val_samples": 75,
+    "cal_samples": 76,
     "label_distribution": {
-      "gen": 15,
-      "act": 15
+      "gen": 194,
+      "act": 182
     }
   },
   "training": {
@@ -23,15 +25,19 @@
     "batch_size": 8,
     "learning_rate": 5e-05,
     "early_stopping_patience": 3,
-    "device_used": "mps"
+    "device_used": "mps",
+    "training_duration_minutes": null
   },
   "performance": {
-    "validation_accuracy": 0.8333333333333334,
-    "validation_loss": 0.6548766493797302,
+    "validation_accuracy": 1.0,
+    "validation_loss": 0.4704737961292267,
+    "precision": null,
+    "recall": null,
+    "f1_score": null,
     "calibration": {
-      "temperature": 0.1000052749944835,
-      "pre_calibration_ece": 0.46666561563809716,
-      "post_calibration_ece": 0.46666561563809716,
+      "temperature": 0.1081945194419979,
+      "pre_calibration_ece": 0.35183490420642655,
+      "post_calibration_ece": 0.35183490420642655,
       "method": "temperature_scaling"
     }
   },
@@ -41,36 +47,48 @@
     "calibration_path": "/Users/oberfelder/Projects/tinyintent/router/train/output/calibration.pkl",
     "output_directory": "/Users/oberfelder/Projects/tinyintent/router/train/output"
   },
+  "coreml_models": {
+    "SmallIntent": {
+      "target_path": "/Users/oberfelder/Projects/tinyintent/router/SmallIntent.mlmodel",
+      "created": false,
+      "size_mb": null
+    },
+    "TinyIntent": {
+      "target_path": "/Users/oberfelder/Projects/tinyintent/router/TinyIntent.mlmodel",
+      "created": false,
+      "size_mb": null
+    }
+  },
   "sample_predictions": [
     {
       "text": "Generate a summary report",
-      "predicted_label": "gen",
-      "raw_confidence": 0.5502958297729492,
-      "calibrated_confidence": 0.8827314972877502
+      "predicted_label": "act",
+      "raw_confidence": 0.5050246119499207,
+      "calibrated_confidence": 0.5463089346885681
     },
     {
       "text": "Close all trading positions",
       "predicted_label": "act",
-      "raw_confidence": 0.5140085816383362,
-      "calibrated_confidence": 0.6365593075752258
+      "raw_confidence": 0.5848727226257324,
+      "calibrated_confidence": 0.9596295952796936
     },
     {
       "text": "Write me a poem",
       "predicted_label": "gen",
-      "raw_confidence": 0.5526605844497681,
-      "calibrated_confidence": 0.8922709822654724
+      "raw_confidence": 0.5698986053466797,
+      "calibrated_confidence": 0.9309398531913757
     },
     {
       "text": "Restart the server",
       "predicted_label": "act",
-      "raw_confidence": 0.5236015319824219,
-      "calibrated_confidence": 0.720051109790802
+      "raw_confidence": 0.598608136177063,
+      "calibrated_confidence": 0.9757309556007385
     },
     {
       "text": "Emergency stop all bots",
       "predicted_label": "act",
-      "raw_confidence": 0.5324796438217163,
-      "calibrated_confidence": 0.7859949469566345
+      "raw_confidence": 0.6088619232177734,
+      "calibrated_confidence": 0.9835386276245117
     }
   ]
 }

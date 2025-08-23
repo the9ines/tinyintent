@@ -1,0 +1,55 @@
+text	label
+Generate a summary of this document	gen
+Write a blog post about AI	gen
+Create a poem about nature	gen
+Tell me a story	gen
+Explain quantum physics	gen
+What is machine learning	gen
+Close my bot position on ETH	act
+Restart the trading bot	act
+Check bot status	act
+Stop all positions	act
+Emergency close all trades	act
+Show me the logs	act
+Monitor system health	act
+Backup the database	act
+Update bot configuration	act
+Run system diagnostics	act
+Can you write me an email	gen
+Draft a response to this message	gen
+Compose a letter	gen
+Generate code for this function	gen
+Create documentation	gen
+Translate this text	gen
+Summarize this article	gen
+Rewrite this paragraph	gen
+Check server status	act
+Deploy the application	act
+Scale the infrastructure	act
+Monitor network traffic	act
+Restart the service	act
+Update system packages	act
+Execute maintenance script	act
+Run backup procedure	act
+Kill the hanging process	act
+Clear the cache	act
+Analyze the performance logs	act
+Fix the broken deployment	act
+What's the weather like	gen
+Tell me about history	gen
+Explain how this works	gen
+Give me cooking instructions	gen
+Help me understand this concept	gen
+Write some creative content	gen
+Generate marketing copy	gen
+Create a presentation outline	gen
+Execute the trading strategy	act
+Liquidate these positions	act
+Hedge this exposure	act
+Cancel pending orders	act
+Rebalance the portfolio	act
+Execute arbitrage opportunity	act
+Close long positions	act
+Open short positions	act
+Stop loss execution	act
+Take profit on positions	act
