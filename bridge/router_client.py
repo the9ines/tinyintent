@@ -11,6 +11,9 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+# Import edge case logging for systematic improvement
+from .edge_case_logger import log_router_decision
+
 class SmallIntentRouter:
     """Interface to SmallIntent.mlmodel for routing decisions with confidence thresholds."""
     
@@ -50,43 +53,67 @@ class SmallIntentRouter:
         
         print(f"Router confidence thresholds: gen={self.min_conf_gen}, act={self.min_conf_act}, fallback={self.fallback_threshold}")
     
-    def route_request(self, text: str, skip_metrics: bool = False) -> Dict[str, Any]:
+    def route_request(self, text: str, skip_metrics: bool = False, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Route request using SmallIntent.mlmodel with confidence thresholds.
         
         Args:
             text: Input text to route
             skip_metrics: Skip recording metrics (used by health checks)
+            session_id: Session ID for edge case tracking
         
         Returns:
             {"route": "gen|act|abstain", "intent": "...", "confidence": 0.95, "abstain_reason": "..."}
         """
         if not self.router_available or not self.models_available:
-            return self._fallback_routing(text)
+            result = self._fallback_routing(text)
+            # Log fallback scenario as edge case
+            if not skip_metrics and session_id:
+                self._log_router_decision(text, session_id, result, fallback_reason="router_unavailable")
+            return result
         
         try:
-            result = subprocess.run(
+            subprocess_result = subprocess.run(
                 ["swift", str(self.router_path), text],
                 capture_output=True,
                 text=True,
                 timeout=5
             )
             
-            if result.returncode != 0:
-                print(f"Router execution failed: {result.stderr}")
-                return self._fallback_routing(text)
+            if subprocess_result.returncode != 0:
+                print(f"Router execution failed: {subprocess_result.stderr}")
+                result = self._fallback_routing(text)
+                # Log execution failure as edge case
+                if not skip_metrics and session_id:
+                    self._log_router_decision(text, session_id, result, fallback_reason="execution_failed")
+                return result
             
             try:
-                routing_result = json.loads(result.stdout.strip())
-                return self._apply_confidence_thresholds(routing_result, text)
+                raw_routing_result = json.loads(subprocess_result.stdout.strip())
+                final_result = self._apply_confidence_thresholds(raw_routing_result, text)
+                
+                # Log router decision for edge case analysis
+                if not skip_metrics and session_id:
+                    self._log_router_decision(text, session_id, final_result, 
+                                           raw_result=raw_routing_result)
+                
+                return final_result
                 
             except json.JSONDecodeError:
-                print(f"Invalid JSON from router: {result.stdout}")
-                return self._fallback_routing(text)
+                print(f"Invalid JSON from router: {subprocess_result.stdout}")
+                result = self._fallback_routing(text)
+                # Log JSON decode failure as edge case
+                if not skip_metrics and session_id:
+                    self._log_router_decision(text, session_id, result, fallback_reason="json_decode_failed")
+                return result
                 
         except Exception as e:
             print(f"Router error: {e}")
-            return self._fallback_routing(text)
+            result = self._fallback_routing(text)
+            # Log exception as edge case
+            if not skip_metrics and session_id:
+                self._log_router_decision(text, session_id, result, fallback_reason=f"exception: {str(e)}")
+            return result
     
     def _apply_confidence_thresholds(self, routing_result: Dict[str, Any], text: str) -> Dict[str, Any]:
         """
@@ -145,6 +172,56 @@ class SmallIntentRouter:
             "abstain_reason": "router_fallback",
             "abstain_reason_detail": "Using fallback routing due to router unavailability"
         }
+    
+    def _log_router_decision(
+        self, 
+        text: str, 
+        session_id: str, 
+        final_result: Dict[str, Any], 
+        raw_result: Optional[Dict[str, Any]] = None,
+        fallback_reason: Optional[str] = None
+    ):
+        """Log router decision for edge case analysis."""
+        try:
+            # Extract key information
+            predicted_route = raw_result.get("route") if raw_result else final_result.get("route", "unknown")
+            predicted_confidence = raw_result.get("confidence") if raw_result else final_result.get("confidence", 0.0)
+            predicted_intent = raw_result.get("intent") if raw_result else final_result.get("intent")
+            
+            actual_route = final_result.get("route")
+            actual_confidence = final_result.get("confidence", 0.0)
+            
+            # Determine fallback reason
+            if not fallback_reason:
+                if final_result.get("abstain_reason"):
+                    fallback_reason = final_result["abstain_reason"]
+                elif predicted_route != actual_route:
+                    fallback_reason = "confidence_threshold_applied"
+            
+            # Log the decision
+            log_router_decision(
+                text=text,
+                session_id=session_id,
+                predicted_route=predicted_route,
+                predicted_confidence=predicted_confidence,
+                predicted_intent=predicted_intent,
+                actual_route=actual_route,
+                actual_confidence=actual_confidence,
+                fallback_reason=fallback_reason,
+                context_source="router_client",
+                context_metadata={
+                    "raw_result": raw_result,
+                    "final_result": final_result,
+                    "thresholds": {
+                        "min_conf_gen": self.min_conf_gen,
+                        "min_conf_act": self.min_conf_act,
+                        "fallback_threshold": self.fallback_threshold
+                    }
+                }
+            )
+            
+        except Exception as e:
+            print(f"Failed to log router decision: {e}")
 
 
 # Global router instance

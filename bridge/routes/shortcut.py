@@ -19,6 +19,7 @@ from ..shortcut_format import (
 from ..security import constant_time_compare
 from ..router_client import SmallIntentRouter
 from ..gen_client import async_ollama_client
+from ..edge_case_logger import log_router_decision, log_user_correction
 from helpers.executor import HelperExecutor
 from helpers.registry import HelperRegistry
 
@@ -109,7 +110,8 @@ async def shortcut_route(
         # Determine route using router or fallback logic
         if router_client and router_client.router_available and router_client.models_available:
             try:
-                route_result = router_client.route_request(clean_text)
+                # Pass session_id for edge case logging
+                route_result = router_client.route_request(clean_text, session_id=session_id)
                 route_used = route_result["route"]
                 router_confidence = route_result.get("confidence", 0.0)
                 intent = route_result.get("intent", "unknown")
@@ -118,11 +120,39 @@ async def shortcut_route(
                 route_used = "gen" if any(word in clean_text.lower() for word in ["what", "how", "why", "when", "where", "explain", "tell me"]) else "act"
                 router_confidence = 0.0
                 intent = "fallback"
+                
+                # Log fallback scenario as edge case
+                log_router_decision(
+                    text=clean_text,
+                    session_id=session_id,
+                    predicted_route="unknown",
+                    predicted_confidence=0.0,
+                    actual_route=route_used,
+                    actual_confidence=router_confidence,
+                    fallback_reason=f"router_exception: {str(e)}",
+                    context_source="iPhone_shortcut",
+                    voice_command=True,
+                    shortcut_session=True
+                )
         else:
             # Fallback routing logic
             route_used = "gen" if any(word in clean_text.lower() for word in ["what", "how", "why", "when", "where", "explain", "tell me"]) else "act"
             router_confidence = 0.0
             intent = "fallback"
+            
+            # Log fallback scenario as edge case
+            log_router_decision(
+                text=clean_text,
+                session_id=session_id,
+                predicted_route="unknown",
+                predicted_confidence=0.0,
+                actual_route=route_used,
+                actual_confidence=router_confidence,
+                fallback_reason="router_unavailable",
+                context_source="iPhone_shortcut",
+                voice_command=True,
+                shortcut_session=True
+            )
         
         response_text = ""
         execution_result = None

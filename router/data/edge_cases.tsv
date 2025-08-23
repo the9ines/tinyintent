@@ -1,0 +1,56 @@
+text	expected_label	predicted_label	predicted_confidence	edge_case_type	source	notes
+How does quantum computing work	gen	act	0.55	misclassified_question	iPhone_Shortcut	Question misclassified as action - known issue
+How do I close my positions	act	gen	0.52	misclassified_command	iPhone_Shortcut	Command phrased as question
+What's my trading bot status	act	gen	0.48	implicit_command	iPhone_Shortcut	Implicit status check command
+Tell me how machine learning works	gen	act	0.61	imperative_question	iPhone_Shortcut	Imperative form of informational request
+Show me how to cook pasta	gen	act	0.73	ambiguous_show	iPhone_Shortcut	Could be gen (instructions) or act (video/recipe)
+Can you explain artificial intelligence	gen	act	0.59	polite_question	iPhone_Shortcut	Polite question form misclassified
+How about checking my bot status	act	gen	0.42	conversational_command	iPhone_Shortcut	Casual/conversational command style
+What happens if I stop the trading bot	gen	act	0.67	hypothetical_question	iPhone_Shortcut	Hypothetical question vs actual command
+Tell me about my current positions	act	gen	0.51	status_inquiry	iPhone_Shortcut	Status inquiry should be action
+How can I monitor system logs	act	gen	0.49	capability_question	iPhone_Shortcut	Question about capability implies action
+Show me what's in the error logs	act	gen	0.46	investigative_request	iPhone_Shortcut	Investigation request should be action
+Explain how the trading algorithm works	gen	act	0.58	technical_explanation	iPhone_Shortcut	Technical explanation request
+What would happen if I restart the server	gen	act	0.71	conditional_question	iPhone_Shortcut	Conditional question about system action
+Can you help me understand neural networks	gen	act	0.63	help_request	iPhone_Shortcut	Help request for information
+How do you check database connections	act	gen	0.44	procedural_question	iPhone_Shortcut	Procedural question implies action needed
+Tell me the status of all services	act	gen	0.53	information_command	iPhone_Shortcut	Command for system information
+What's the current memory usage	act	gen	0.41	status_question	iPhone_Shortcut	Status question should trigger monitoring
+Show me recent system alerts	act	gen	0.47	display_request	iPhone_Shortcut	Display request should be action
+How often should I backup the database	gen	act	0.66	advisory_question	iPhone_Shortcut	Seeking advice/best practices
+Can I get the server performance metrics	act	gen	0.39	permission_request	iPhone_Shortcut	Polite request for system data
+What kind of errors are in the logs	act	gen	0.45	diagnostic_question	iPhone_Shortcut	Diagnostic question requires log analysis
+Tell me more about blockchain technology	gen	act	0.57	follow_up_request	iPhone_Shortcut	Follow-up informational request
+How should I configure the load balancer	gen	act	0.72	configuration_advice	iPhone_Shortcut	Seeking configuration guidance
+What's the best way to monitor network traffic	gen	act	0.69	best_practice_question	iPhone_Shortcut	Best practice question
+Show me how SSL certificates work	gen	act	0.74	educational_display	iPhone_Shortcut	Educational content request
+Can you walk me through the deployment process	gen	act	0.61	tutorial_request	iPhone_Shortcut	Step-by-step tutorial request
+How do I interpret these performance graphs	gen	act	0.56	interpretation_help	iPhone_Shortcut	Help with data interpretation
+What does this error message mean	gen	act	0.64	error_explanation	iPhone_Shortcut	Error explanation request
+Tell me about the current system health	act	gen	0.38	health_inquiry	iPhone_Shortcut	Health inquiry should check systems
+How's the database performance looking	act	gen	0.43	performance_check	iPhone_Shortcut	Informal performance check
+What can you tell me about recent backups	act	gen	0.41	backup_inquiry	iPhone_Shortcut	Backup status inquiry
+Show me what's happening with the network	act	gen	0.37	network_investigation	iPhone_Shortcut	Network status investigation
+How are the containers running	act	gen	0.44	container_status	iPhone_Shortcut	Container status check
+What's going on with the API responses	act	gen	0.42	api_investigation	iPhone_Shortcut	API performance investigation
+Can you check if the SSL certificates are valid	act	gen	0.35	validation_request	iPhone_Shortcut	Certificate validation request
+How long since the last system backup	act	gen	0.39	timestamp_query	iPhone_Shortcut	Specific system data query
+What's the current disk usage situation	act	gen	0.36	usage_inquiry	iPhone_Shortcut	Resource usage inquiry
+Tell me about any recent security alerts	act	gen	0.38	security_inquiry	iPhone_Shortcut	Security status inquiry
+How many users are currently logged in	act	gen	0.41	user_count_query	iPhone_Shortcut	Active user count query
+What's the status of the automated tasks	act	gen	0.40	task_status_inquiry	iPhone_Shortcut	Scheduled task status check
+Show me the current system configuration	act	gen	0.37	config_display	iPhone_Shortcut	Configuration display request
+How are the microservices performing	act	gen	0.43	service_performance	iPhone_Shortcut	Service performance check
+What's the latest on the deployment pipeline	act	gen	0.42	pipeline_status	iPhone_Shortcut	CI/CD pipeline status check
+Can you give me a network connectivity report	act	gen	0.34	report_request	iPhone_Shortcut	System report generation request
+How's the message queue processing going	act	gen	0.41	queue_status	iPhone_Shortcut	Queue processing status check
+What are the recent changes to the system	act	gen	0.40	change_history	iPhone_Shortcut	System change history inquiry
+Tell me about the current load balancer status	act	gen	0.38	load_balancer_status	iPhone_Shortcut	Load balancer status inquiry
+How's the cloud infrastructure holding up	act	gen	0.42	infrastructure_health	iPhone_Shortcut	Infrastructure health check
+What's new with the monitoring dashboards	act	gen	0.41	dashboard_updates	iPhone_Shortcut	Monitoring dashboard inquiry
+Can you show me the service dependencies	act	gen	0.36	dependency_visualization	iPhone_Shortcut	Service dependency display
+How are the automated tests running	act	gen	0.40	test_status	iPhone_Shortcut	Automated test status inquiry
+What's the current state of data archiving	act	gen	0.39	archiving_status	iPhone_Shortcut	Data archiving process status
+Tell me about the system's compliance status	act	gen	0.37	compliance_inquiry	iPhone_Shortcut	Compliance status check
+How's the disaster recovery setup looking	act	gen	0.41	disaster_recovery_status	iPhone_Shortcut	DR status inquiry
+What about the application performance metrics	act	gen	0.40	app_performance_inquiry	iPhone_Shortcut	Application metrics inquiry
