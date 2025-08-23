@@ -31,7 +31,7 @@ class ShortcutRouteRequest(BaseModel):
     text: str
     session_id: Optional[str] = None
     mode: str = "preview"  # preview or execute
-    return_format: str = "text"  # text or json
+    return_format: str = "text"  # text, json, or minimal
 
 class ShortcutRouteResponse(BaseModel):
     speak: Optional[str] = None
@@ -217,6 +217,8 @@ async def shortcut_route(
                     helper_candidates.append("log_tailer")
                 elif any(word in text_lower for word in ["trade", "position", "crypto", "bot", "close", "buy", "sell"]):
                     helper_candidates.append("bot_guard")
+                elif any(word in text_lower for word in ["weather", "temperature", "forecast", "rain", "hot", "cold", "conditions"]):
+                    helper_candidates.append("weather")
                 
                 if helper_candidates:
                     # Try the first matching helper
@@ -224,10 +226,49 @@ async def shortcut_route(
                     
                     # Simple input mapping for voice commands
                     helper_input = {"operation": "status", "text": clean_text}
-                    if "close" in text_lower:
-                        helper_input["operation"] = "close_position"
-                    elif "position" in text_lower or "status" in text_lower:
-                        helper_input["operation"] = "get_positions"
+                    
+                    # Weather helper input mapping
+                    if helper_id == "weather":
+                        # Extract location from query
+                        import re
+                        location = ""
+                        
+                        # Look for ZIP code pattern
+                        zip_match = re.search(r'\b\d{5}\b', clean_text)
+                        if zip_match:
+                            location = zip_match.group()
+                        else:
+                            # Try to extract city/location after common phrases
+                            location_patterns = [
+                                r'weather in (.+?)(?:\s|$)',
+                                r'temperature in (.+?)(?:\s|$)',
+                                r'conditions in (.+?)(?:\s|$)',
+                                r'forecast for (.+?)(?:\s|$)'
+                            ]
+                            
+                            for pattern in location_patterns:
+                                match = re.search(pattern, clean_text, re.IGNORECASE)
+                                if match:
+                                    location = match.group(1).strip()
+                                    break
+                            
+                            # Default to asking for user location
+                            if not location:
+                                location = "current location"
+                        
+                        helper_input = {
+                            "location": location,
+                            "operation": "current",
+                            "units": "imperial",
+                            "include_forecast": "forecast" in text_lower
+                        }
+                    
+                    # Trading helper input mapping
+                    elif helper_id == "bot_guard":
+                        if "close" in text_lower:
+                            helper_input["operation"] = "close_position"
+                        elif "position" in text_lower or "status" in text_lower:
+                            helper_input["operation"] = "get_positions"
                     
                     # Execute in preview mode for safety
                     result = executor.preview(helper_id, helper_input)
@@ -279,6 +320,28 @@ async def shortcut_route(
             return ShortcutRouteResponse(**formatted)
         elif request.return_format == "json":
             return ShortcutRouteResponse(data=response_payload)
+        elif request.return_format == "minimal":
+            # Minimal format: just the essential text for voice responses
+            response_text = response_payload.get("text", "Request processed successfully.")
+            
+            # For helper responses, extract the clean message
+            execution_result = response_payload.get("execution_result", {})
+            if route_used == "act" and "helper_used" in execution_result:
+                helper_id = execution_result.get("helper_used")
+                
+                # For weather helper, the response_text should already be clean
+                # But check if there's a shorter/cleaner message available
+                if helper_id == "weather":
+                    # Weather helper returns voice-optimized message as response_text
+                    # This should already be clean
+                    pass
+                else:
+                    # For other helpers, try to get clean message from helper response
+                    helper_message = execution_result.get("message")
+                    if helper_message and len(helper_message) < len(response_text):
+                        response_text = helper_message
+            
+            return ShortcutRouteResponse(speak=response_text)
         else:
             # Default voice-optimized formatting
             speak_text = response_payload.get("text", "Request processed successfully.")
