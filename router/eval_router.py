@@ -284,6 +284,117 @@ def determine_promotion_eligibility(metrics, thresholds=None):
         'summary': f"Model {'PASSES' if promotion_eligible else 'FAILS'} promotion criteria"
     }
 
+def evaluate_edge_cases(model_path, edge_cases_path, tokenizer_path=None):
+    """Evaluate router performance on collected edge cases."""
+    logger.info(f"Evaluating edge cases from: {edge_cases_path}")
+    
+    # Load edge cases
+    if not edge_cases_path.exists():
+        logger.error(f"Edge cases file not found: {edge_cases_path}")
+        return None
+    
+    try:
+        df = pd.read_csv(edge_cases_path, sep='\t')
+        logger.info(f"Loaded {len(df)} edge cases")
+    except Exception as e:
+        logger.error(f"Failed to load edge cases: {e}")
+        return None
+    
+    # Filter for cases with expected labels
+    df = df.dropna(subset=['expected_label'])
+    if len(df) == 0:
+        logger.error("No valid edge cases with expected labels found")
+        return None
+    
+    # Prepare data
+    test_texts = df['text'].tolist()
+    expected_labels = df['expected_label'].tolist()
+    
+    # Convert to numerical labels
+    label_map = {'gen': 0, 'act': 1}
+    expected_labels_num = [label_map.get(label, -1) for label in expected_labels]
+    
+    # Filter out invalid labels
+    valid_indices = [i for i, label in enumerate(expected_labels_num) if label != -1]
+    test_texts = [test_texts[i] for i in valid_indices]
+    expected_labels_num = [expected_labels_num[i] for i in valid_indices]
+    expected_labels = [expected_labels[i] for i in valid_indices]
+    
+    if not test_texts:
+        logger.error("No valid edge cases after filtering")
+        return None
+    
+    logger.info(f"Evaluating {len(test_texts)} valid edge cases")
+    
+    # Run evaluation
+    predictions, confidences, latencies = evaluate_coreml_model(
+        model_path, test_texts, expected_labels_num, tokenizer_path
+    )
+    
+    if predictions is None:
+        logger.error("Edge case evaluation failed")
+        return None
+    
+    # Calculate edge case specific metrics
+    accuracy = accuracy_score(expected_labels_num, predictions)
+    
+    # Analyze by edge case type if available
+    edge_case_analysis = {}
+    if 'edge_case_type' in df.columns:
+        df_valid = df.iloc[valid_indices]
+        for edge_type in df_valid['edge_case_type'].unique():
+            if pd.isna(edge_type):
+                continue
+            
+            type_mask = df_valid['edge_case_type'] == edge_type
+            type_indices = [i for i, mask in enumerate(type_mask) if mask]
+            
+            if type_indices:
+                type_expected = [expected_labels_num[i] for i in type_indices]
+                type_predicted = [predictions[i] for i in type_indices]
+                type_confidences = [confidences[i] for i in type_indices]
+                
+                edge_case_analysis[edge_type] = {
+                    'sample_count': len(type_indices),
+                    'accuracy': accuracy_score(type_expected, type_predicted),
+                    'avg_confidence': float(np.mean(type_confidences)),
+                    'confidence_range': {
+                        'min': float(np.min(type_confidences)),
+                        'max': float(np.max(type_confidences))
+                    }
+                }
+    
+    # Create detailed results
+    edge_case_results = []
+    df_valid = df.iloc[valid_indices]
+    for i, (text, expected, predicted, confidence) in enumerate(zip(test_texts, expected_labels, predictions, confidences)):
+        predicted_label = 'gen' if predicted == 0 else 'act'
+        correct = expected == predicted_label
+        
+        edge_case_results.append({
+            'text': text,
+            'expected_label': expected,
+            'predicted_label': predicted_label,
+            'confidence': float(confidence),
+            'correct': correct,
+            'edge_case_type': df_valid.iloc[i].get('edge_case_type', 'unknown'),
+            'source': df_valid.iloc[i].get('source', 'unknown')
+        })
+    
+    return {
+        'timestamp': pd.Timestamp.now().isoformat(),
+        'total_edge_cases': len(test_texts),
+        'overall_accuracy': accuracy,
+        'avg_confidence': float(np.mean(confidences)),
+        'edge_case_analysis': edge_case_analysis,
+        'detailed_results': edge_case_results,
+        'improvement_candidates': [
+            result for result in edge_case_results 
+            if not result['correct'] and result['confidence'] > 0.5
+        ]
+    }
+
+
 def main():
     """Main evaluation function"""
     project_root = Path(__file__).parent.parent
@@ -359,6 +470,32 @@ def main():
         }
     }
     
+    # Evaluate edge cases if available
+    edge_case_path = project_root / "router" / "data" / "edge_cases.tsv"
+    edge_case_results = None
+    if edge_case_path.exists():
+        logger.info("\n" + "="*50)
+        logger.info("EDGE CASE EVALUATION")
+        logger.info("="*50)
+        edge_case_results = evaluate_edge_cases(model_path, edge_case_path, tokenizer_path)
+        
+        if edge_case_results:
+            logger.info(f"Edge cases tested: {edge_case_results['total_edge_cases']}")
+            logger.info(f"Edge case accuracy: {edge_case_results['overall_accuracy']:.4f}")
+            logger.info(f"Edge case avg confidence: {edge_case_results['avg_confidence']:.4f}")
+            logger.info(f"High-confidence errors: {len(edge_case_results['improvement_candidates'])}")
+            
+            if edge_case_results['edge_case_analysis']:
+                logger.info("\nBy edge case type:")
+                for edge_type, analysis in edge_case_results['edge_case_analysis'].items():
+                    logger.info(f"  {edge_type}: {analysis['accuracy']:.3f} accuracy ({analysis['sample_count']} samples)")
+        else:
+            logger.warning("Edge case evaluation failed")
+    
+    # Add edge case results to evaluation output
+    if edge_case_results:
+        eval_result['edge_case_evaluation'] = edge_case_results
+    
     # Save results
     output_path = project_root / "router" / "data" / "eval_results.json"
     with open(output_path, 'w') as f:
@@ -383,6 +520,8 @@ def main():
     for label, class_metrics in metrics['per_class_metrics'].items():
         logger.info(f"  {label}: P={class_metrics['precision']:.3f}, R={class_metrics['recall']:.3f}, F1={class_metrics['f1']:.3f}")
     logger.info("")
+    if edge_case_results:
+        logger.info(f"Edge case accuracy: {edge_case_results['overall_accuracy']:.4f} ({edge_case_results['total_edge_cases']} cases)")
     logger.info(f"Promotion status: {promotion_result['summary']}")
     logger.info(f"Results saved to: {output_path}")
     
