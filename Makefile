@@ -114,6 +114,18 @@ learn-edges-force: ## Force edge case retraining regardless of thresholds
 	@$(PYTHON) scripts/edge_case_pipeline.py --force
 	@echo "$(GREEN)✅ Forced edge case retraining completed!$(NC)"
 
+monitor-router: ## Monitor router performance and edge case accumulation
+	@echo "$(GREEN)Router Performance Monitoring...$(NC)"
+	@echo "================================"
+	@$(PYTHON) scripts/monitor_router_performance.py --once
+	@echo "$(GREEN)✅ Performance monitoring completed!$(NC)"
+
+monitor-continuous: ## Run continuous router performance monitoring
+	@echo "$(GREEN)Continuous Router Monitoring...$(NC)"
+	@echo "==============================="
+	@echo "$(YELLOW)Press Ctrl+C to stop monitoring$(NC)"
+	@$(PYTHON) scripts/monitor_router_performance.py --continuous
+
 ##@ Learning Loop (M5.3)
 learn: ## Automated learning loop: export episodes → train → evaluate → validate artifacts
 	@echo "$(GREEN)Starting TinyIntent Learning Loop...$(NC)"
@@ -231,4 +243,4 @@ status: ## Show project status
 	@echo "Recent activity:"
 	@ls -la $(DATA_DIR)/episodes/ 2>/dev/null || echo "No episode data"
 
-.PHONY: help bridgesrv doctor router-train router-eval router-clean analyze-edges learn-edges learn-edges-dry learn-edges-force learn promote autopilot autopilot-dry export-episodes export-summary clean-data backup-data lint format test clean status
+.PHONY: help bridgesrv doctor router-train router-eval router-clean analyze-edges learn-edges learn-edges-dry learn-edges-force monitor-router monitor-continuous learn promote autopilot autopilot-dry export-episodes export-summary clean-data backup-data lint format test clean status
