@@ -1,0 +1,153 @@
+name: network_monitor
+display_name: "Network Anomaly Detection & Predictive Maintenance"
+description: "Monitors Cisco Enterprise and Ubiquiti devices for network anomalies, predicts device failures, and automatically backs up configurations before failures occur"
+purpose: "Network infrastructure monitoring and predictive maintenance for enterprise environments"
+version: "1.0.0"
+author: "TinyIntent Network Engineering Team"
+category: network-engineering
+risk_level: medium
+
+capabilities:
+  - network  # SNMP and API access to network devices
+  - filesystem  # Configuration backup storage
+
+operations:
+  - name: add_cisco_device
+    description: "Add a Cisco device for monitoring via SNMP"
+    risk_level: low
+    
+  - name: add_ubiquiti_device  
+    description: "Add a Ubiquiti device for monitoring via UniFi Controller API"
+    risk_level: low
+    
+  - name: collect_metrics
+    description: "Collect real-time metrics from a network device"
+    risk_level: low
+    
+  - name: detect_anomalies
+    description: "Analyze device metrics for anomalies using ML and rule-based detection"
+    risk_level: low
+    
+  - name: predict_failure
+    description: "Predict device failure probability based on historical trends"
+    risk_level: medium
+    
+  - name: backup_config
+    description: "Backup device configuration before predicted failure"
+    risk_level: medium
+    
+  - name: full_monitoring
+    description: "Complete monitoring workflow - metrics, anomalies, predictions, backups"
+    risk_level: medium
+
+supported_devices:
+  cisco:
+    devices:
+      - switches
+      - routers  
+      - access_points
+    protocols:
+      - snmp_v2c
+      - snmp_v3
+      - ssh
+      - netconf
+    
+  ubiquiti:
+    devices:
+      - unifi_access_points
+      - unifi_switches
+      - unifi_gateways
+    protocols:
+      - unifi_api
+      - snmp
+
+anomaly_detection:
+  methods:
+    - rule_based_thresholds
+    - isolation_forest_ml
+    - one_class_svm_ml
+    - temporal_trend_analysis
+    
+  indicators:
+    - high_cpu_usage
+    - memory_leaks
+    - interface_errors
+    - link_instability
+    - wifi_performance_degradation
+    - ddos_patterns
+
+failure_prediction:
+  techniques:
+    - trend_analysis
+    - pattern_recognition
+    - multi_metric_correlation
+    
+  prediction_horizon: "24 hours to 2 weeks"
+  
+  triggers:
+    - cpu_usage_trend_analysis
+    - memory_growth_patterns
+    - error_rate_increases
+    - link_flap_frequency
+
+backup_automation:
+  triggers:
+    - "failure_probability_above_50_percent"
+    - "critical_anomaly_detected" 
+    - "manual_request"
+    
+  supported_formats:
+    cisco:
+      - "running-config"
+      - "startup-config"
+      - "nvram"
+    ubiquiti:
+      - "unifi_site_export"
+      - "device_config_json"
+
+monitoring_intervals:
+  metrics_collection: "5 minutes" 
+  anomaly_detection: "real-time"
+  failure_prediction: "hourly"
+  config_backup: "on-demand"
+
+integration:
+  snmp:
+    versions:
+      - "v2c"
+      - "v3"
+    timeout: "5 seconds"
+    retries: 3
+    
+  unifi_controller:
+    api_version: "v2"
+    ssl_verify: true
+    timeout: "10 seconds"
+    
+  machine_learning:
+    models:
+      - "IsolationForest"
+      - "OneClassSVM"
+    training_window: "30 days"
+    retraining_interval: "weekly"
+
+security:
+  snmp_community_strings: "encrypted_storage"
+  api_credentials: "secure_vault"
+  config_backups: "encrypted_at_rest"
+  audit_logging: "all_operations"
+
+alerts:
+  high_priority:
+    - device_unreachable
+    - critical_failure_prediction
+    - security_anomaly
+    
+  medium_priority:
+    - performance_degradation
+    - configuration_drift
+    - capacity_warnings
+    
+  low_priority:
+    - routine_monitoring_updates
+    - successful_backups

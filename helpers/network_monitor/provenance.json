@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "helper_id": "network_monitor",
+  "timestamp": "2025-08-25T06:17:44.168150Z",
+  "generator": "claude-code-network-anomaly-detection-implementation-v2",
+  "files": {
+    "helper.yaml": "163fbb35e9a40bfd9791fd4ef8b7dd0f86b4c32e0ec3adfdfacdbe9bbeed8183",
+    "input.schema.json": "8d9dfb472c167dd98a0d53e20a17f2186ee3360bb1f91d8b8471451d56012d4a",
+    "output.schema.json": "e66fabcf9fc666188c7c5d406c237c54df6cc02caf3232e130fa9a86fd3066cf",
+    "main.py": "2776412e46ede6bb1abf835c6333208ae0b641d2347330d73e1a6db92695f9cb"
+  },
+  "digest": "03b1937fc92faeb74fdccb25f81e5b9ae171ed73d692f6fc94e21b9c820e9361",
+  "sig": "80da3e19af5a7dfc7b28007e5bd29ba7656a567049dd2846c8c8cac83c1cce1d"
+}

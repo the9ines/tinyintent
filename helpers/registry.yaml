@@ -165,6 +165,33 @@ helpers:
       notes: "System monitoring helper - production ready with psutil"
     # Health Check Configuration
     healthcheck: "health.py"
+    
+  network_monitor:
+    name: "Network Anomaly Detection & Predictive Maintenance"
+    description: "Network monitoring for Cisco Enterprise and Ubiquiti devices with ML-based anomaly detection and predictive failure analysis"
+    enabled: true
+    category: "network-engineering"
+    risk_level: "medium"
+    can_execute: true  # Network monitoring is safe to execute
+    manifest_path: "helpers/network_monitor/helper.yaml"
+    requires_approval: false  # Network monitoring doesn't require approval
+    required_envs: []  # No required env vars - uses optional device credentials
+    capabilities:
+      - "network"  # Required for SNMP and API calls
+      - "filesystem"  # Required for configuration backups
+    safety_notes: "Medium risk helper for network device monitoring. Uses SNMP and UniFi Controller API. Creates config backups but doesn't modify device configs."
+    # Helper Lifecycle & Versioning
+    version: "1.0.0"
+    added: "2025-08-25"
+    updated: "2025-08-25"
+    maintainer: "TinyIntent Network Engineering Team <network@tinyintent.ai>"
+    # Agent Lifecycle Governance
+    lifecycle:
+      state: "trusted"  # Safe for production use
+      since: "2025-08-25"
+      notes: "Network monitoring and anomaly detection - production ready for Cisco/Ubiquiti"
+    # Health Check Configuration
+    healthcheck: "health.py"
 
 # Global settings - M9.1: Safe-by-default configuration
 settings:

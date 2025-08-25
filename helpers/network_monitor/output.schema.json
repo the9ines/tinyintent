@@ -1,0 +1,395 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Network Monitor Helper Output Schema",
+  "description": "Output schema for network monitoring and anomaly detection results",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error", "partial", "timeout"],
+      "description": "Overall operation status"
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "add_cisco_device",
+        "add_ubiquiti_device",
+        "collect_metrics", 
+        "detect_anomalies",
+        "predict_failure",
+        "backup_config",
+        "full_monitoring"
+      ],
+      "description": "The operation that was performed"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Operation completion timestamp"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable status message"
+    },
+    "error": {
+      "type": "string",
+      "description": "Error message if status is error"
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Device metrics collected",
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "device_host": {
+          "type": "string"
+        },
+        "device_type": {
+          "type": "string",
+          "enum": ["cisco", "ubiquiti"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["success", "error", "timeout", "unreachable"]
+        },
+        "sysUpTime": {
+          "type": "string",
+          "description": "System uptime in ticks"
+        },
+        "sysName": {
+          "type": "string",
+          "description": "System name/hostname"
+        },
+        "cpuUtil": {
+          "type": "string",
+          "description": "CPU utilization percentage"
+        },
+        "memoryUtil": {
+          "type": "string", 
+          "description": "Memory utilization in bytes"
+        },
+        "model": {
+          "type": "string",
+          "description": "Device model (Ubiquiti)"
+        },
+        "version": {
+          "type": "string",
+          "description": "Firmware version (Ubiquiti)"
+        },
+        "uptime": {
+          "type": "integer",
+          "description": "Uptime in seconds (Ubiquiti)"
+        },
+        "cpu_usage": {
+          "type": "number",
+          "description": "CPU usage percentage (Ubiquiti)"
+        },
+        "memory_usage": {
+          "type": "number",
+          "description": "Memory usage percentage (Ubiquiti)"
+        },
+        "client_count": {
+          "type": "integer",
+          "description": "Connected client count (Ubiquiti)"
+        },
+        "interfaces": {
+          "type": "object",
+          "properties": {
+            "total_interfaces": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "active_interfaces": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "error_rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "utilization_avg": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "link_flaps_1h": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "cable_health": {
+          "type": "object",
+          "properties": {
+            "cable_issues_detected": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "suspect_interfaces": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "link_stability_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "recommendations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "wifi_performance": {
+          "type": "object",
+          "properties": {
+            "signal_strength_avg": {
+              "type": "number",
+              "description": "Average signal strength in dBm"
+            },
+            "noise_floor": {
+              "type": "number",
+              "description": "Noise floor in dBm"
+            },
+            "channel_utilization": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "client_satisfaction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "interference_detected": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "anomalies": {
+      "type": "object",
+      "description": "Anomaly detection results",
+      "properties": {
+        "device_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "anomalies_detected": {
+          "type": "boolean"
+        },
+        "anomaly_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Anomaly severity score (0=normal, 1=critical)"
+        },
+        "anomaly_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "high_cpu_usage",
+              "high_memory_usage",
+              "high_error_rate",
+              "link_instability", 
+              "device_unreachable",
+              "ml_statistical_anomaly",
+              "ml_pattern_anomaly",
+              "wifi_performance_degradation"
+            ]
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Detection confidence level"
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Recommended actions to address anomalies"
+        }
+      },
+      "required": ["device_id", "timestamp", "anomalies_detected"]
+    },
+    "failure_prediction": {
+      "type": "object", 
+      "description": "Device failure prediction results",
+      "properties": {
+        "device_id": {
+          "type": "string"
+        },
+        "device_type": {
+          "type": "string",
+          "enum": ["cisco", "ubiquiti"]
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "failure_probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Probability of device failure (0=unlikely, 1=imminent)"
+        },
+        "time_to_failure": {
+          "type": ["string", "null"],
+          "description": "Estimated time until failure (e.g., '24-48 hours')"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Prediction confidence level"
+        },
+        "indicators": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "increasing_cpu_usage",
+              "memory_leak_pattern",
+              "interface_error_increase",
+              "frequent_link_flaps", 
+              "temperature_rise",
+              "power_supply_issues",
+              "wifi_performance_degradation",
+              "client_disconnections",
+              "firmware_instability"
+            ]
+          },
+          "description": "Specific failure indicators detected"
+        },
+        "recommendation": {
+          "type": "string",
+          "enum": ["monitor", "monitor_closely", "backup_recommended", "immediate_action", "insufficient_data"],
+          "description": "Recommended action based on failure risk"
+        }
+      },
+      "required": ["device_id", "timestamp", "failure_probability", "confidence"]
+    },
+    "backup_result": {
+      "type": "object",
+      "description": "Configuration backup results",
+      "properties": {
+        "device_id": {
+          "type": "string"
+        },
+        "device_type": {
+          "type": "string",
+          "enum": ["cisco", "ubiquiti"]
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "backup_status": {
+          "type": "string",
+          "enum": ["success", "error", "partial", "unsupported_device_type"]
+        },
+        "backup_file": {
+          "type": ["string", "null"],
+          "description": "Path to backup file"
+        },
+        "backup_size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Size of backup file in bytes"
+        },
+        "backup_method": {
+          "type": "string",
+          "enum": ["snmp_ssh", "netconf", "unifi_api", "manual"],
+          "description": "Method used for backup"
+        },
+        "triggered_by": {
+          "type": "string",
+          "description": "What triggered the backup (e.g., 'failure_prediction_0.75')"
+        }
+      },
+      "required": ["device_id", "timestamp", "backup_status"]
+    },
+    "monitoring_results": {
+      "type": "array",
+      "description": "Results from full monitoring operation",
+      "items": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "object",
+            "properties": {
+              "type": {"type": "string", "enum": ["cisco", "ubiquiti"]},
+              "host": {"type": "string"}
+            },
+            "required": ["type", "host"]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "metrics": {
+            "$ref": "#/properties/metrics"
+          },
+          "anomalies": {
+            "$ref": "#/properties/anomalies"
+          },
+          "failure_prediction": {
+            "$ref": "#/properties/failure_prediction"
+          },
+          "backup_result": {
+            "$ref": "#/properties/backup_result"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message for this device if monitoring failed"
+          }
+        },
+        "required": ["device", "timestamp"]
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Summary statistics for bulk operations",
+      "properties": {
+        "total_devices": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "devices_with_anomalies": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "high_risk_devices": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "backups_created": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors_encountered": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "required": ["status", "operation", "timestamp", "message"],
+  "additionalProperties": false
+}

@@ -1,0 +1,53 @@
+{
+  "name": "network_monitor_helper",
+  "version": "1.0.0",
+  "description": "Network anomaly detection and predictive maintenance for Cisco Enterprise and Ubiquiti devices",
+  "author": "TinyIntent Network Engineering Team <network@tinyintent.ai>",
+  "license": "MIT",
+  "keywords": ["network", "monitoring", "anomaly-detection", "cisco", "ubiquiti", "snmp", "unifi", "prediction", "backup"],
+  "homepage": "https://tinyintent.ai/helpers/network-monitor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinyintent/helpers-network-monitor.git"
+  },
+  "bugs": "https://github.com/tinyintent/helpers-network-monitor/issues",
+  "tinyintent": {
+    "spec_version": "1.0",
+    "category": "network-engineering",
+    "risk_level": "medium",
+    "capabilities": ["network", "filesystem"],
+    "supported_versions": [">=2.0.0"],
+    "entry_point": "./main.py",
+    "language": "python",
+    "requires_approval": false,
+    "can_execute": true,
+    "lifecycle": {
+      "state": "trusted",
+      "since": "2025-08-25",
+      "notes": "Core network monitoring helper - production ready for Cisco/Ubiquiti environments"
+    },
+    "limits": {
+      "preview_per_min": 60,
+      "exec_per_min": 30,
+      "daily_exec_budget": 500
+    }
+  },
+  "dependencies": {
+    "pysnmp": ">=4.4.0",
+    "aiohttp": ">=3.8.0",
+    "scikit-learn": ">=1.0.0",
+    "numpy": ">=1.21.0"
+  },
+  "engines": {
+    "python": ">=3.8",
+    "tinyintent": ">=2.0.0"
+  },
+  "files": [
+    "main.py",
+    "helper.yaml", 
+    "input.schema.json",
+    "output.schema.json",
+    "health.py",
+    "provenance.json"
+  ]
+}

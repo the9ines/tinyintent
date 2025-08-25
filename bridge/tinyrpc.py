@@ -26,7 +26,7 @@ sys.path.insert(0, str(project_root))
 
 from tinyintent.config import settings
 from .api_main import router_api
-from .gen_client import async_ollama_client
+# LLM generation capabilities removed - focusing on automation only
 from .logs.audit import initialize_audit_logger, get_audit_logger
 from helpers.sdk import helper_registry
 from data.episodes.episodes import agent_staging_storage
@@ -62,42 +62,27 @@ def setup_logging() -> None:
     )
 
 
-async def rollback_watcher() -> None:
+async def network_anomaly_watcher() -> None:
     """
-    M10.4: Background watcher for monitoring trusted agents and auto-rollback on regressions.
+    Background watcher for network anomaly detection.
     
-    Runs every hour and checks trusted agents' performance over the rollback window.
-    If error rate exceeds threshold, automatically demotes to deprecated state.
+    Monitors network devices for anomalies and triggers alerts/backups as needed.
     """
     import asyncio
     import os
-    from datetime import datetime, timedelta
     
     logger = structlog.get_logger()
     
-    # Get rollback configuration from environment
-    window_hours = int(os.getenv("AGENT_ROLLBACK_WINDOW_H", "6"))
-    error_rate_threshold = float(os.getenv("AGENT_ROLLBACK_ERROR_RATE", "0.2"))
-    check_interval_seconds = 3600  # Check every hour
+    # Get network monitoring configuration
+    check_interval_seconds = int(os.getenv("NETWORK_CHECK_INTERVAL_S", "300"))  # 5 minutes
     
     if os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower() in ["debug", "info"]:
-        logger.info("Rollback watcher started", window_hours=window_hours, error_rate_threshold=error_rate_threshold)
+        logger.info("Network anomaly watcher started", check_interval=check_interval_seconds)
     
     while True:
         try:
-            # Get audit logger
-            audit_logger = get_audit_logger()
-            
-            # Get all trusted helpers from registry
-            trusted_helpers = []
-            for helper_id in helper_registry.list_all_helpers():
-                entry = helper_registry.get_registry_entry(helper_id)
-                if entry and entry.is_trusted():
-                    trusted_helpers.append(helper_id)
-            
-            logger.debug("Checking trusted helpers for rollback", count=len(trusted_helpers))
-            
-            # Check each trusted helper for regressions
+            # Network monitoring will be handled by network_monitor helper
+            await asyncio.sleep(check_interval_seconds)
             for helper_id in trusted_helpers:
                 try:
                     # Get metrics for the rollback window

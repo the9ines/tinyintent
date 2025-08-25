@@ -1,0 +1,317 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Network Monitor Helper Input Schema",
+  "description": "Input validation schema for network anomaly detection and device monitoring operations",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": [
+        "add_cisco_device",
+        "add_ubiquiti_device", 
+        "collect_metrics",
+        "detect_anomalies",
+        "predict_failure",
+        "backup_config",
+        "full_monitoring"
+      ],
+      "description": "The monitoring operation to perform"
+    },
+    "host": {
+      "type": "string",
+      "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$|^[a-zA-Z0-9.-]+$",
+      "description": "Device IP address or hostname"
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["cisco", "ubiquiti"]
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$|^[a-zA-Z0-9.-]+$"
+        },
+        "community": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "SNMP community string for Cisco devices"
+        },
+        "snmp_version": {
+          "type": "string",
+          "enum": ["v2c", "v3"],
+          "default": "v2c"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Username for SNMPv3 or UniFi Controller"
+        },
+        "auth_key": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "description": "SNMPv3 authentication key"
+        },
+        "priv_key": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "description": "SNMPv3 privacy key"
+        },
+        "controller_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "UniFi Controller URL for Ubiquiti devices"
+        },
+        "password": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Password for UniFi Controller"
+        }
+      },
+      "required": ["type", "host"],
+      "additionalProperties": false
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "$ref": "#/properties/device"
+      },
+      "minItems": 1,
+      "maxItems": 50,
+      "description": "Array of devices for bulk monitoring operations"
+    },
+    "device_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9.-]+$",
+      "description": "Unique device identifier for anomaly detection"
+    },
+    "current_metrics": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "device_host": {
+          "type": "string"
+        },
+        "device_type": {
+          "type": "string",
+          "enum": ["cisco", "ubiquiti"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["success", "error", "timeout", "unreachable"]
+        },
+        "cpuUtil": {
+          "type": ["string", "number"],
+          "description": "CPU utilization percentage"
+        },
+        "memoryUtil": {
+          "type": ["string", "number"],
+          "description": "Memory utilization in bytes"
+        },
+        "interfaces": {
+          "type": "object",
+          "properties": {
+            "total_interfaces": {"type": "integer", "minimum": 0},
+            "active_interfaces": {"type": "integer", "minimum": 0},
+            "error_rate": {"type": "number", "minimum": 0, "maximum": 1},
+            "utilization_avg": {"type": "number", "minimum": 0, "maximum": 100},
+            "link_flaps_1h": {"type": "integer", "minimum": 0}
+          }
+        },
+        "wifi_performance": {
+          "type": "object",
+          "properties": {
+            "signal_strength_avg": {"type": "number"},
+            "channel_utilization": {"type": "number", "minimum": 0, "maximum": 100},
+            "client_satisfaction": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "metrics_history": {
+      "type": "array",
+      "items": {
+        "$ref": "#/properties/current_metrics"
+      },
+      "minItems": 1,
+      "maxItems": 1000,
+      "description": "Historical metrics for trend analysis"
+    },
+    "failure_prediction": {
+      "type": "object",
+      "properties": {
+        "failure_probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "time_to_failure": {
+          "type": ["string", "null"]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "indicators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "community": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "default": "public",
+      "description": "SNMP community string"
+    },
+    "snmp_version": {
+      "type": "string",
+      "enum": ["v2c", "v3"],
+      "default": "v2c",
+      "description": "SNMP version to use"
+    },
+    "controller_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "UniFi Controller base URL"
+    },
+    "username": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Authentication username"
+    },
+    "password": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Authentication password"
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 300,
+      "default": 30,
+      "description": "Operation timeout in seconds"
+    },
+    "include_predictions": {
+      "type": "boolean",
+      "default": true,
+      "description": "Include failure predictions in monitoring results"
+    },
+    "auto_backup": {
+      "type": "boolean", 
+      "default": true,
+      "description": "Automatically backup configs for high-risk devices"
+    },
+    "backup_threshold": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "description": "Failure probability threshold for automatic backup"
+    }
+  },
+  "required": ["operation"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "add_cisco_device"
+          }
+        }
+      },
+      "then": {
+        "required": ["host", "community"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "add_ubiquiti_device"
+          }
+        }
+      },
+      "then": {
+        "required": ["host", "controller_url", "username", "password"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "collect_metrics"
+          }
+        }
+      },
+      "then": {
+        "required": ["device"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "detect_anomalies"
+          }
+        }
+      },
+      "then": {
+        "required": ["device_id", "current_metrics"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "predict_failure"
+          }
+        }
+      },
+      "then": {
+        "required": ["device", "metrics_history"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "backup_config"
+          }
+        }
+      },
+      "then": {
+        "required": ["device"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "full_monitoring"
+          }
+        }
+      },
+      "then": {
+        "required": ["devices"]
+      }
+    }
+  ]
+}
