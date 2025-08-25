@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "System Monitor Input Schema",
+  "description": "Input parameters for the system monitor helper",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": [
+        "overview",
+        "all", 
+        "cpu",
+        "memory",
+        "mem",
+        "disk",
+        "storage", 
+        "network",
+        "net",
+        "system",
+        "info",
+        "processes"
+      ],
+      "default": "overview",
+      "description": "Type of system information to retrieve"
+    },
+    "format": {
+      "type": "string",
+      "enum": ["summary", "detailed", "json"],
+      "default": "summary",
+      "description": "Output format for system information"
+    },
+    "include_processes": {
+      "type": "boolean",
+      "default": false,
+      "description": "Include top processes in the output"
+    },
+    "process_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "default": 5,
+      "description": "Number of top processes to include (by CPU and memory)"
+    }
+  },
+  "required": [],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "operation": "overview",
+      "format": "summary"
+    },
+    {
+      "operation": "cpu",
+      "format": "detailed"
+    },
+    {
+      "operation": "all",
+      "format": "json",
+      "include_processes": true,
+      "process_limit": 10
+    },
+    {
+      "operation": "memory"
+    }
+  ]
+}

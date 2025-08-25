@@ -1,14 +1,14 @@
 {
   "version": "1.0",
   "helper_id": "weather",
-  "timestamp": "2025-08-23T06:12:32.764994Z",
-  "generator": "claude-code-weather-implementation",
+  "timestamp": "2025-08-23T21:56:09.812728Z",
+  "generator": "claude-code-location-system-implementation",
   "files": {
     "helper.yaml": "a3ac7dd13cc287aeb878e49f33295533826bcd8ff6d6fa7c0bcc30b229e6d57d",
-    "input.schema.json": "128fd9ac02b46cc24f997ab9a3d8dd8771bf0cfb96dff8e287aef4e4e50623c9",
+    "input.schema.json": "19c129188a861e02a130fb1f15a61e3f163cc6e10aa358454ac6f0b9c2ccd461",
     "output.schema.json": "d71a6911f4ea8f6bccb28b2971a7a2e8bbde0b817ff2329b41658bee5bb0dcac",
-    "main.py": "fc565a511eb48d6f656ac1ad245d0082b93480dbcc9b05192e66dfdca072aa30"
+    "main.py": "f588f0c7400d11e022746da9b6141b2cd1ac37f3c1231374fec0f6f511624c34"
   },
-  "digest": "8776e265e00be975a64f434c50cc85183ba7a1d5f92145068a12320cc9fcea78",
-  "sig": "5c76bc22d1adad380e32595d247f9b7afc92cd7e8a974459e6b263cec6254e11"
+  "digest": "83f955c8d97a37bc6c125f0006f2afcc5a975b17f6399624542fec789f86a9cd",
+  "sig": "6dee78c6892233d23c76640d051f06086dcd61437d37b2441332e4fb7f8fa910"
 }

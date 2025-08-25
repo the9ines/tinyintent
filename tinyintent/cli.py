@@ -245,25 +245,41 @@ def start_server(host: str = None, port: int = None, reload: bool = False, quiet
 
 def main():
     """Main CLI entry point."""
+    # Check if no arguments provided - start interactive mode
+    if len(sys.argv) == 1:
+        from .interactive import run_interactive
+        return run_interactive()
+    
+    # Check if first argument is 'helper' for helper management
+    if len(sys.argv) > 1 and sys.argv[1] == 'helper':
+        # Route to helper CLI
+        from .helper_cli import main as helper_main
+        # Pass remaining args to helper CLI
+        return helper_main(sys.argv[2:])
+    
     parser = argparse.ArgumentParser(
         description="TinyIntent - Voice-Activated AI Assistant Platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  tinyintent                    # Start with defaults
-  tinyintent --port 9000        # Start on custom port  
-  tinyintent --host 127.0.0.1   # Start on localhost only
-  tinyintent --reload           # Start with auto-reload for development
-  tinyintent status             # Show system status
+  tinyintent                          # Start interactive CLI (default)
+  tinyintent serve                    # Start HTTP server
+  tinyintent --port 9000              # Start server on custom port  
+  tinyintent --host 127.0.0.1         # Start server on localhost only
+  tinyintent --reload                 # Start with auto-reload for development
+  tinyintent status                   # Show system status
+  tinyintent helper search weather    # Search for helper packages
+  tinyintent helper install weather   # Install a helper package
+  tinyintent helper list              # List installed helpers
         """
     )
     
     parser.add_argument(
         'command', 
         nargs='?', 
-        default='start',
-        choices=['start', 'status', 'help', 'show-credentials', 'regenerate-credentials'],
-        help='Command to run (default: start)'
+        default='interactive',
+        choices=['interactive', 'serve', 'start', 'status', 'help', 'show-credentials', 'regenerate-credentials', 'helper'],
+        help='Command to run (default: interactive)'
     )
     
     parser.add_argument(
@@ -320,13 +336,26 @@ Examples:
         show_credentials(show_secret=args.show_secret)
     elif args.command == 'regenerate-credentials':
         regenerate_credentials()
-    else:  # start
+    elif args.command == 'helper':
+        # This case handles 'tinyintent helper' with no subcommand
+        from .helper_cli import main as helper_main
+        return helper_main([])  # Show helper help
+    elif args.command == 'interactive':
+        # Interactive mode
+        from .interactive import run_interactive
+        return run_interactive()
+    elif args.command in ['serve', 'start']:
+        # Server mode
         start_server(
             host=args.host,
             port=args.port,
             reload=args.reload,
             quiet=args.quiet
         )
+    else:
+        # Default to interactive
+        from .interactive import run_interactive
+        return run_interactive()
 
 if __name__ == '__main__':
     main()

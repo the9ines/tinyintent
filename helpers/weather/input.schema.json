@@ -26,6 +26,6 @@
       "description": "Type of weather operation to perform"
     }
   },
-  "required": ["location"],
+  "required": [],
   "additionalProperties": false
 }

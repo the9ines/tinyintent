@@ -39,3 +39,9 @@ launchd/*.plist
 *.swp
 *.swo
 *~
+# Large model files - not tracked in git
+router/SmallIntent.onnx
+router/train/output/final_model/model.safetensors
+router/train/output/checkpoint-*/
+*.pt
+*.safetensors

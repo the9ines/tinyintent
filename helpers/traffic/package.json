@@ -1,0 +1,50 @@
+{
+  "name": "traffic_helper",
+  "version": "1.0.0", 
+  "description": "Real-time traffic conditions and routing with location awareness - demonstrates modular location system",
+  "author": "TinyIntent Core Team <core@tinyintent.ai>",
+  "license": "MIT",
+  "keywords": ["traffic", "routing", "location", "gps", "navigation"],
+  "homepage": "https://tinyintent.ai/helpers/traffic",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinyintent/helpers-traffic.git"
+  },
+  "bugs": "https://github.com/tinyintent/helpers-traffic/issues",
+  "tinyintent": {
+    "spec_version": "1.0",
+    "category": "information",
+    "risk_level": "low",
+    "capabilities": ["network"],
+    "supported_versions": [">=2.0.0"],
+    "entry_point": "./main.py",
+    "language": "python",
+    "requires_approval": false,
+    "can_execute": true,
+    "lifecycle": {
+      "state": "trusted",
+      "since": "2025-01-27",
+      "notes": "Location-aware helper demonstrating modular location system"
+    },
+    "limits": {
+      "preview_per_min": 100,
+      "exec_per_min": 30,
+      "daily_exec_budget": 500
+    }
+  },
+  "dependencies": {
+    "requests": ">=2.25.0"
+  },
+  "engines": {
+    "python": ">=3.8",
+    "tinyintent": ">=2.0.0"
+  },
+  "files": [
+    "main.py",
+    "helper.yaml", 
+    "input.schema.json",
+    "output.schema.json",
+    "manifest.json",
+    "provenance.json"
+  ]
+}

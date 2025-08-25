@@ -1,0 +1,50 @@
+{
+  "name": "bot_guard",
+  "version": "2.1.0",
+  "description": "Live crypto exchange integration with sandbox-only defaults for safe trading operations",
+  "author": "TinyIntent Core Team <core@tinyintent.ai>",
+  "license": "MIT",
+  "keywords": ["crypto", "trading", "exchange", "bitcoin", "ethereum"],
+  "homepage": "https://tinyintent.ai/helpers/bot_guard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinyintent/helpers-bot_guard.git"
+  },
+  "bugs": "https://github.com/tinyintent/helpers-bot_guard/issues",
+  "tinyintent": {
+    "spec_version": "1.0",
+    "category": "trading",
+    "risk_level": "high",
+    "capabilities": ["network"],
+    "supported_versions": [">=2.0.0"],
+    "entry_point": "./main.js",
+    "language": "node",
+    "requires_approval": true,
+    "can_execute": false,
+    "lifecycle": {
+      "state": "trusted",
+      "since": "2024-12-15",
+      "notes": "Core trading helper - requires manual execution approval"
+    },
+    "limits": {
+      "preview_per_min": 30,
+      "exec_per_min": 5,
+      "daily_exec_budget": 50
+    }
+  },
+  "dependencies": {
+    "ccxt": ">=4.0.0",
+    "axios": ">=0.27.0"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "tinyintent": ">=2.0.0"
+  },
+  "files": [
+    "main.js",
+    "helper.yaml",
+    "input.schema.json",
+    "output.schema.json",
+    "health.js"
+  ]
+}

@@ -222,10 +222,42 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("TinyIntent Bridge starting up", version="2.0.0")
             logger.info("Configuration loaded", environment=settings.environment)
         
-        # Validate critical settings
+        # SECURITY: Enhanced secret validation on startup
         if not settings.security.secret:
             logger.error("TINYINTENT_SECRET not configured")
             raise RuntimeError("TINYINTENT_SECRET environment variable is required")
+        
+        # Perform comprehensive secret strength validation
+        try:
+            from .secret_validator import validate_production_secret
+            
+            validation_result = validate_production_secret(settings.security.secret)
+            
+            if not validation_result.is_valid:
+                error_msg = f"TinyIntent API secret validation failed (score: {validation_result.score}/100):\n"
+                for issue in validation_result.issues:
+                    error_msg += f"  - {issue}\n"
+                
+                if validation_result.suggestions:
+                    error_msg += "\nRecommendations:\n"
+                    for suggestion in validation_result.suggestions:
+                        error_msg += f"  - {suggestion}\n"
+                
+                # Log comprehensive validation failure  
+                logger.error("Secret validation failed during startup", 
+                           score=validation_result.score,
+                           entropy=validation_result.entropy,
+                           issues=validation_result.issues[:3])  # Limit log verbosity
+                
+                raise RuntimeError(error_msg)
+            else:
+                logger.info("Secret validation passed", 
+                          score=validation_result.score,
+                          entropy=round(validation_result.entropy, 1))
+        
+        except ImportError:
+            # Fallback validation if secret_validator not available
+            logger.warning("Advanced secret validation unavailable, using basic validation")
         
         # Initialize components
         await async_ollama_client.health_check()

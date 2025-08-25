@@ -116,6 +116,55 @@ helpers:
       notes: "Weather information helper - production ready with free APIs"
     # Health Check Configuration
     healthcheck: "health.py"
+    
+  traffic:
+    name: "Traffic Conditions Helper"
+    description: "Real-time traffic conditions and routing with location awareness"
+    enabled: true
+    category: "information"
+    risk_level: "low"
+    can_execute: true  # Safe to execute - no system modifications, demonstration data
+    manifest_path: "helpers/traffic/manifest.json"
+    requires_approval: false  # Low risk - safe for direct execution
+    required_envs: []  # No API keys required - uses mock data for demonstration
+    capabilities:
+      - "network"  # Required for future API calls (currently uses mock data)
+    safety_notes: "Low risk helper for traffic information. Currently uses demonstration data. Location-aware via TinyIntent location service."
+    # Helper Lifecycle & Versioning
+    version: "1.0.0"
+    added: "2025-01-27"
+    updated: "2025-01-27"
+    maintainer: "TinyIntent Core Team <core@tinyintent.ai>"
+    # Agent Lifecycle Governance
+    lifecycle:
+      state: "trusted"  # Safe for production use
+      since: "2025-01-27"
+      notes: "Traffic helper demonstrating modular location awareness"
+    
+  system_monitor:
+    name: "System Performance Monitor"
+    description: "Real-time system performance monitoring including CPU, memory, disk, and network usage"
+    enabled: true
+    category: "monitoring"
+    risk_level: "low"
+    can_execute: true  # Safe to execute - read-only system monitoring
+    manifest_path: "helpers/system_monitor/helper.yaml"
+    requires_approval: false  # Low risk - safe for direct execution
+    required_envs: []  # No external dependencies - uses psutil
+    capabilities: []  # No special capabilities needed - uses Python standard libraries
+    safety_notes: "Low risk helper for system monitoring. Uses psutil for cross-platform system information. Read-only operations with no system modifications."
+    # Helper Lifecycle & Versioning
+    version: "1.0.0"
+    added: "2025-08-23"
+    updated: "2025-08-23"
+    maintainer: "TinyIntent Core Team <core@tinyintent.ai>"
+    # Agent Lifecycle Governance
+    lifecycle:
+      state: "trusted"  # Safe for production use
+      since: "2025-08-23"
+      notes: "System monitoring helper - production ready with psutil"
+    # Health Check Configuration
+    healthcheck: "health.py"
 
 # Global settings - M9.1: Safe-by-default configuration
 settings:

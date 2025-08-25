@@ -1,0 +1,201 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "System Monitor Output Schema",
+  "description": "Output structure for the system monitor helper",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"],
+      "description": "Execution status"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable summary or error message"
+    },
+    "result": {
+      "type": "object",
+      "description": "System monitoring data and results",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Human-readable summary of system status"
+        },
+        "data": {
+          "type": "object",
+          "description": "Detailed system metrics",
+          "properties": {
+            "cpu": {
+              "type": "object",
+              "properties": {
+                "usage_percent": {"type": "number"},
+                "cores_physical": {"type": "integer"},
+                "cores_logical": {"type": "integer"},
+                "frequency_mhz": {
+                  "type": "object",
+                  "properties": {
+                    "current": {"type": ["number", "null"]},
+                    "min": {"type": ["number", "null"]},
+                    "max": {"type": ["number", "null"]}
+                  }
+                },
+                "load_average": {
+                  "type": ["array", "null"],
+                  "items": {"type": "number"}
+                }
+              }
+            },
+            "memory": {
+              "type": "object", 
+              "properties": {
+                "virtual": {
+                  "type": "object",
+                  "properties": {
+                    "total_gb": {"type": "number"},
+                    "available_gb": {"type": "number"},
+                    "used_gb": {"type": "number"},
+                    "usage_percent": {"type": "number"},
+                    "free_gb": {"type": "number"}
+                  }
+                },
+                "swap": {
+                  "type": "object",
+                  "properties": {
+                    "total_gb": {"type": "number"},
+                    "used_gb": {"type": "number"},
+                    "free_gb": {"type": "number"},
+                    "usage_percent": {"type": "number"}
+                  }
+                }
+              }
+            },
+            "disk": {
+              "type": "object",
+              "properties": {
+                "partitions": {
+                  "type": "object",
+                  "patternProperties": {
+                    ".*": {
+                      "type": "object",
+                      "properties": {
+                        "device": {"type": "string"},
+                        "filesystem": {"type": "string"},
+                        "total_gb": {"type": "number"},
+                        "used_gb": {"type": "number"},
+                        "free_gb": {"type": "number"},
+                        "usage_percent": {"type": "number"}
+                      }
+                    }
+                  }
+                },
+                "io_stats": {
+                  "type": ["object", "null"],
+                  "properties": {
+                    "read_count": {"type": "integer"},
+                    "write_count": {"type": "integer"},
+                    "read_bytes": {"type": "integer"},
+                    "write_bytes": {"type": "integer"},
+                    "read_time_ms": {"type": "integer"},
+                    "write_time_ms": {"type": "integer"}
+                  }
+                }
+              }
+            },
+            "network": {
+              "type": "object",
+              "properties": {
+                "io_stats": {
+                  "type": ["object", "null"],
+                  "properties": {
+                    "bytes_sent": {"type": "integer"},
+                    "bytes_recv": {"type": "integer"},
+                    "packets_sent": {"type": "integer"},
+                    "packets_recv": {"type": "integer"},
+                    "bytes_sent_mb": {"type": "number"},
+                    "bytes_recv_mb": {"type": "number"}
+                  }
+                },
+                "interfaces": {
+                  "type": "object",
+                  "description": "Network interfaces and their addresses"
+                }
+              }
+            },
+            "system": {
+              "type": "object",
+              "properties": {
+                "platform": {"type": "string"},
+                "system": {"type": "string"},
+                "processor": {"type": "string"},
+                "architecture": {"type": "string"},
+                "hostname": {"type": "string"},
+                "boot_time": {"type": "string"},
+                "uptime": {"type": "string"},
+                "uptime_seconds": {"type": "integer"}
+              }
+            },
+            "processes": {
+              "type": "object",
+              "properties": {
+                "top_cpu": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pid": {"type": "integer"},
+                      "name": {"type": "string"},
+                      "cpu_percent": {"type": "number"},
+                      "memory_percent": {"type": "number"}
+                    }
+                  }
+                },
+                "top_memory": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pid": {"type": "integer"},
+                      "name": {"type": "string"},
+                      "cpu_percent": {"type": "number"},
+                      "memory_percent": {"type": "number"}
+                    }
+                  }
+                },
+                "total_processes": {"type": "integer"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the monitoring was performed"
+    },
+    "helper_id": {
+      "type": "string",
+      "const": "system_monitor"
+    },
+    "operation": {
+      "type": "string",
+      "description": "The operation that was performed"
+    },
+    "error_code": {
+      "type": "string",
+      "description": "Error code if status is 'error'"
+    }
+  },
+  "required": ["status", "message"],
+  "if": {
+    "properties": {"status": {"const": "success"}}
+  },
+  "then": {
+    "required": ["result", "timestamp", "helper_id", "operation"]
+  },
+  "else": {
+    "properties": {
+      "error_code": {"type": "string"}
+    }
+  }
+}

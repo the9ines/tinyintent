@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Traffic Helper Output Schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "traffic_info": {
+      "type": "object",
+      "properties": {
+        "current_location": {
+          "type": "string"
+        },
+        "traffic_level": {
+          "type": "string",
+          "enum": ["light", "moderate", "heavy", "severe"]
+        },
+        "travel_time": {
+          "type": "string"
+        },
+        "distance": {
+          "type": "string"
+        },
+        "route_preference": {
+          "type": "string"
+        },
+        "incidents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "message": {
+      "type": "string"
+    },
+    "error_message": {
+      "type": "string"
+    }
+  },
+  "required": ["status"]
+}

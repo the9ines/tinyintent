@@ -1,0 +1,72 @@
+{
+  "helper_id": "traffic",
+  "name": "Traffic Conditions Helper",
+  "description": "Get real-time traffic conditions and route information using location data",
+  "version": "1.0.0",
+  "author": "TinyIntent System",
+  "capabilities": ["network"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "operation": {
+        "type": "string",
+        "enum": ["current_traffic", "route_time", "traffic_incidents"],
+        "description": "Type of traffic operation to perform"
+      },
+      "destination": {
+        "type": "string",
+        "description": "Destination address or coordinates (optional for current_traffic)"
+      },
+      "route_preference": {
+        "type": "string",
+        "enum": ["fastest", "shortest", "avoid_highways"],
+        "default": "fastest",
+        "description": "Route preference"
+      }
+    },
+    "required": ["operation"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "enum": ["success", "error"]
+      },
+      "traffic_info": {
+        "type": "object",
+        "properties": {
+          "current_location": {"type": "string"},
+          "traffic_level": {
+            "type": "string",
+            "enum": ["light", "moderate", "heavy", "severe"]
+          },
+          "travel_time": {"type": "string"},
+          "distance": {"type": "string"},
+          "incidents": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      },
+      "message": {"type": "string"},
+      "error_message": {"type": "string"}
+    },
+    "required": ["status"]
+  },
+  "execution_policy": {
+    "preview": true,
+    "execute": true,
+    "requires_approval": false,
+    "dry_run": false
+  },
+  "environment": {
+    "required": [],
+    "optional": ["OPENROUTESERVICE_API_KEY"]
+  },
+  "lifecycle": {
+    "state": "trusted",
+    "since": "2024-01-15",
+    "notes": "Location-aware traffic helper using free APIs"
+  }
+}

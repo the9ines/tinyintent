@@ -1,0 +1,41 @@
+{
+  "name": "system_monitor",
+  "version": "1.0.0",
+  "description": "Real-time system performance monitoring including CPU, memory, disk, and network usage",
+  "author": "TinyIntent Core Team <core@tinyintent.ai>",
+  "license": "MIT",
+  "keywords": ["system", "monitoring", "performance", "cpu", "memory", "disk", "network", "psutil"],
+  "homepage": "https://tinyintent.ai/helpers/system_monitor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinyintent/helpers-system-monitor.git"
+  },
+  "bugs": "https://github.com/tinyintent/helpers-system-monitor/issues",
+  "tinyintent": {
+    "spec_version": "1.0",
+    "category": "monitoring",
+    "risk_level": "low",
+    "capabilities": [],
+    "supported_versions": [">=2.0.0"],
+    "entry_point": "./main.py",
+    "requires_approval": false,
+    "sandbox": {
+      "network": false,
+      "filesystem": "read-only",
+      "processes": true
+    }
+  },
+  "dependencies": {
+    "psutil": ">=5.8.0"
+  },
+  "engines": {
+    "python": ">=3.7"
+  },
+  "files": [
+    "main.py",
+    "helper.yaml",
+    "input.schema.json",
+    "output.schema.json",
+    "health.py"
+  ]
+}

@@ -17,9 +17,11 @@ from ..shortcut_format import (
     get_shortcut_error_response
 )
 from ..security import constant_time_compare
+from ..token_manager import get_secure_shortcut_token
 from ..router_client import SmallIntentRouter
 from ..gen_client import async_ollama_client
 from ..edge_case_logger import log_router_decision, log_user_correction
+from ..location_service import create_location_context
 from helpers.executor import HelperExecutor
 from helpers.registry import HelperRegistry
 
@@ -32,6 +34,9 @@ class ShortcutRouteRequest(BaseModel):
     session_id: Optional[str] = None
     mode: str = "preview"  # preview or execute
     return_format: str = "text"  # text, json, or minimal
+    latitude: Optional[float] = None  # GPS latitude from iPhone location
+    longitude: Optional[float] = None  # GPS longitude from iPhone location
+    location_accuracy: Optional[float] = None  # GPS accuracy in meters
 
 class ShortcutRouteResponse(BaseModel):
     speak: Optional[str] = None
@@ -47,8 +52,13 @@ class ShortcutPingResponse(BaseModel):
     version: str
 
 def verify_shortcut_token(request: Request) -> bool:
-    """Verify X-Shortcut-Token header for iOS Shortcuts authentication."""
-    expected_token = os.environ.get('SHORTCUT_TOKEN', 'iphone-shortcut-secure-token-123')
+    """
+    Verify X-Shortcut-Token header for iOS Shortcuts authentication.
+    
+    Uses secure token manager to get cryptographically secure token.
+    Falls back to environment variable SHORTCUT_TOKEN if available,
+    but warns about potential security risk.
+    """
     provided_token = request.headers.get("X-Shortcut-Token")
     
     if not provided_token:
@@ -56,6 +66,23 @@ def verify_shortcut_token(request: Request) -> bool:
             status_code=401, 
             detail="Missing X-Shortcut-Token header"
         )
+    
+    # Try environment variable first (for compatibility)
+    expected_token = os.environ.get('SHORTCUT_TOKEN')
+    
+    if expected_token:
+        # Using environment token - warn if it looks weak
+        from ..token_manager import get_token_manager
+        token_manager = get_token_manager()
+        validation = token_manager.validate_token_strength(expected_token)
+        
+        if not validation['is_strong']:
+            logger.warning(f"SHORTCUT_TOKEN has weak security: {validation}")
+            logger.warning("Consider removing SHORTCUT_TOKEN env var to use auto-generated secure token")
+    else:
+        # Use secure auto-generated token
+        expected_token = get_secure_shortcut_token()
+        logger.info("Using auto-generated secure shortcut token")
     
     if not constant_time_compare(provided_token, expected_token):
         raise HTTPException(
@@ -98,6 +125,21 @@ async def shortcut_route(
         max_len = int(os.environ.get('SHORTCUT_MAX_LEN', '800'))
         clean_text = sanitize_short_input(request.text, max_len)
         
+        # Create location context from GPS data
+        location_context = None
+        if request.latitude is not None and request.longitude is not None:
+            location_context = create_location_context(
+                latitude=request.latitude,
+                longitude=request.longitude,
+                accuracy=request.location_accuracy,
+                source="gps"
+            )
+            logger.info(f"Location context: {location_context.display_name()} ({location_context.coordinates_string()})")
+        else:
+            # Use default location context for location-aware helpers
+            location_context = create_location_context()
+            logger.info(f"Using default location: {location_context.display_name()}")
+        
         # Route through TinyIntent system
         session_id = request.session_id or f"shortcut-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
         
@@ -115,9 +157,29 @@ async def shortcut_route(
                 route_used = route_result["route"]
                 router_confidence = route_result.get("confidence", 0.0)
                 intent = route_result.get("intent", "unknown")
+                
+                # Override router for weather requests that are misclassified as "gen"
+                text_lower = clean_text.lower()
+                if (route_used == "gen" and 
+                    any(word in text_lower for word in ["weather", "temperature", "forecast", "rain", "hot", "cold", "conditions"]) and
+                    router_confidence < 0.8):  # Only override if router is not very confident
+                    logger.info(f"Overriding router decision: {route_used} -> act for weather query (confidence: {router_confidence})")
+                    route_used = "act"
+                    intent = "weather_override"
             except Exception as e:
                 logger.warning(f"Router failed, using fallback: {e}")
-                route_used = "gen" if any(word in clean_text.lower() for word in ["what", "how", "why", "when", "where", "explain", "tell me"]) else "act"
+                # Enhanced fallback routing logic - prioritize helper keywords
+                text_lower = clean_text.lower()
+                
+                # Check for action keywords first (helpers that should execute)
+                if any(word in text_lower for word in ["weather", "temperature", "forecast", "rain", "hot", "cold", "conditions", "trade", "position", "crypto", "bot", "close", "buy", "sell", "log", "error", "tail"]):
+                    route_used = "act"
+                # Then check for generation keywords
+                elif any(word in text_lower for word in ["what", "how", "why", "when", "where", "explain", "tell me"]):
+                    route_used = "gen"  
+                else:
+                    route_used = "act"  # Default to action for other commands
+                    
                 router_confidence = 0.0
                 intent = "fallback"
                 
@@ -135,8 +197,17 @@ async def shortcut_route(
                     shortcut_session=True
                 )
         else:
-            # Fallback routing logic
-            route_used = "gen" if any(word in clean_text.lower() for word in ["what", "how", "why", "when", "where", "explain", "tell me"]) else "act"
+            # Enhanced fallback routing logic - prioritize helper keywords
+            text_lower = clean_text.lower()
+            
+            # Check for action keywords first (helpers that should execute)
+            if any(word in text_lower for word in ["weather", "temperature", "forecast", "rain", "hot", "cold", "conditions", "trade", "position", "crypto", "bot", "close", "buy", "sell", "log", "error", "tail"]):
+                route_used = "act"
+            # Then check for generation keywords
+            elif any(word in text_lower for word in ["what", "how", "why", "when", "where", "explain", "tell me"]):
+                route_used = "gen"  
+            else:
+                route_used = "act"  # Default to action for other commands
             router_confidence = 0.0
             intent = "fallback"
             
@@ -227,37 +298,9 @@ async def shortcut_route(
                     # Simple input mapping for voice commands
                     helper_input = {"operation": "status", "text": clean_text}
                     
-                    # Weather helper input mapping
+                    # Weather helper input mapping (location handled by location service)
                     if helper_id == "weather":
-                        # Extract location from query
-                        import re
-                        location = ""
-                        
-                        # Look for ZIP code pattern
-                        zip_match = re.search(r'\b\d{5}\b', clean_text)
-                        if zip_match:
-                            location = zip_match.group()
-                        else:
-                            # Try to extract city/location after common phrases
-                            location_patterns = [
-                                r'weather in (.+?)(?:\s|$)',
-                                r'temperature in (.+?)(?:\s|$)',
-                                r'conditions in (.+?)(?:\s|$)',
-                                r'forecast for (.+?)(?:\s|$)'
-                            ]
-                            
-                            for pattern in location_patterns:
-                                match = re.search(pattern, clean_text, re.IGNORECASE)
-                                if match:
-                                    location = match.group(1).strip()
-                                    break
-                            
-                            # Default to asking for user location
-                            if not location:
-                                location = "current location"
-                        
                         helper_input = {
-                            "location": location,
                             "operation": "current",
                             "units": "imperial",
                             "include_forecast": "forecast" in text_lower
@@ -270,8 +313,10 @@ async def shortcut_route(
                         elif "position" in text_lower or "status" in text_lower:
                             helper_input["operation"] = "get_positions"
                     
-                    # Execute in preview mode for safety
-                    result = executor.preview(helper_id, helper_input)
+                    # Execute in preview mode for safety with location context
+                    result = executor.preview(helper_id, helper_input, 
+                                             session_id=session_id, 
+                                             location_context=location_context)
                     
                     if result.get("status") == "success":
                         response_text = result.get("message", f"Action executed successfully: {clean_text}")
@@ -363,3 +408,86 @@ async def shortcut_route(
     except Exception as e:
         logger.exception("Error processing shortcut request")
         return get_shortcut_error_response("INTERNAL_ERROR", "An internal error occurred")
+
+
+@router.get("/token")
+async def get_current_shortcut_token(request: Request):
+    """
+    Get the current secure shortcut token for iPhone Shortcuts configuration.
+    
+    This endpoint requires basic authentication but returns the token needed
+    for X-Shortcut-Token header in iPhone Shortcuts.
+    
+    Security: Only returns token if request comes from localhost or has valid auth.
+    """
+    from ..security import verify_auth
+    
+    # Require authentication for token retrieval
+    try:
+        verify_auth(request)  # This will raise HTTPException if auth fails
+    except HTTPException:
+        # Allow localhost access without auth for convenience during setup
+        if not request.client or request.client.host not in ["127.0.0.1", "::1", "localhost"]:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required to retrieve token"
+            )
+    
+    # Get current secure token
+    current_token = os.environ.get('SHORTCUT_TOKEN')
+    
+    if current_token:
+        # Return environment token if set
+        from ..token_manager import get_token_manager
+        token_manager = get_token_manager()
+        validation = token_manager.validate_token_strength(current_token)
+        
+        return {
+            "token": current_token,
+            "source": "environment",
+            "security_warning": "Using SHORTCUT_TOKEN environment variable" if not validation['is_strong'] else None,
+            "strength_score": validation['strength_score']
+        }
+    else:
+        # Return auto-generated secure token
+        secure_token = get_secure_shortcut_token()
+        return {
+            "token": secure_token,
+            "source": "auto_generated",
+            "security_info": "Cryptographically secure auto-generated token",
+            "strength_score": 100
+        }
+
+
+@router.post("/token/rotate")
+async def rotate_shortcut_token(request: Request):
+    """
+    Rotate the shortcut token to a new secure value.
+    
+    This invalidates the old token and generates a new cryptographically secure one.
+    Requires authentication.
+    """
+    from ..security import verify_auth
+    
+    # Require authentication for token rotation
+    verify_auth(request)
+    
+    # Only rotate auto-generated tokens, not environment ones
+    if os.environ.get('SHORTCUT_TOKEN'):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot rotate token when SHORTCUT_TOKEN environment variable is set. Remove the environment variable to use auto-generated tokens."
+        )
+    
+    # Generate new token
+    from ..token_manager import get_token_manager
+    token_manager = get_token_manager()
+    new_token = token_manager.rotate_shortcut_token()
+    
+    logger.info("Shortcut token rotated successfully")
+    
+    return {
+        "message": "Token rotated successfully",
+        "new_token": new_token,
+        "warning": "Update your iPhone Shortcut with the new token immediately"
+    }

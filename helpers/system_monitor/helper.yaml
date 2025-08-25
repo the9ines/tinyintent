@@ -1,0 +1,37 @@
+purpose: "Monitor real-time system performance metrics including CPU, memory, disk, and network usage"
+
+schema:
+  input: "./input.schema.json"
+  output: "./output.schema.json"
+
+capabilities:
+  preview: true
+  execute: true
+  emergency_close: false
+
+sandbox:
+  commands:
+    - "/usr/bin/python3"
+    - "./main.py"
+  network: "disabled"  # No network access needed for system monitoring
+  timeouts:
+    - name: "default"
+      seconds: 5
+    - name: "execute"
+      seconds: 10
+  cpu:
+    max_ms: 3000  # Allow CPU time for system data collection
+  mem:
+    max_mb: 32    # Minimal memory requirements
+
+environment:
+  required: []
+  optional:
+    - "SYSTEM_MONITOR_TIMEOUT"  # Override default timeouts
+    - "INCLUDE_NETWORK_DETAILS" # Include detailed network interface info
+
+metadata:
+  version: "1.0.0"
+  author: "TinyIntent Core Team"
+  risk_level: "low"
+  audit_required: false

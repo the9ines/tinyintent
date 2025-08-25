@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "helper_id": "system_monitor",
+  "timestamp": "2025-08-24T03:16:17.521106Z",
+  "generator": "claude-code-system-monitor-implementation",
+  "files": {
+    "helper.yaml": "e4280c43a8d5138bfaa19a96bcdef47ce3859358ba3fd63f01b0185a5407094c",
+    "input.schema.json": "b89492088386521d919187f581d4945e6ba7ee7037c22d5344a148fb1f785497",
+    "output.schema.json": "5df8f8b05ad883d4a7d28d81a9e911bd7c90e2c34e4d55f61b8d59649a37afa7",
+    "main.py": "b63da7731789f948ec4c85f572aafc242c93624ebf5027c30988c5be8d877bdf"
+  },
+  "digest": "2ed32b71db44d6925dcd251b76d244440b0dc340b358ebda548e45987fcf8e4e",
+  "sig": "470d6b8c1125903735214fdcc360b3d052f2111d67795f9a5685180931920cfd"
+}

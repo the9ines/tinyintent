@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Traffic Helper Input Schema",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": ["current_traffic", "route_time", "traffic_incidents"],
+      "default": "current_traffic",
+      "description": "Type of traffic operation to perform"
+    },
+    "destination": {
+      "type": "string",
+      "description": "Destination address or coordinates (optional for current_traffic)"
+    },
+    "route_preference": {
+      "type": "string",
+      "enum": ["fastest", "shortest", "avoid_highways"],
+      "default": "fastest",
+      "description": "Route preference for route_time operations"
+    }
+  },
+  "required": [],
+  "additionalProperties": true
+}

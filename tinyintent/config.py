@@ -24,10 +24,25 @@ class SecuritySettings(BaseSettings):
     execution_enabled: bool = Field(False, description="Enable helper execution")
     
     @validator('secret')
-    def secret_not_empty(cls, v: str) -> str:
-        if not v or len(v) < 16:
-            raise ValueError('Secret must be at least 16 characters')
-        return v
+    def validate_secret_strength(cls, v: str) -> str:
+        if not v:
+            raise ValueError('Secret is required')
+        
+        # Import here to avoid circular imports
+        try:
+            from bridge.secret_validator import enforce_secret_requirements
+            return enforce_secret_requirements(v, "TinyIntent API")
+        except ImportError:
+            # Fallback validation if secret_validator not available
+            if len(v) < 32:
+                raise ValueError('Secret must be at least 32 characters for production use')
+            
+            # Basic weak pattern detection
+            weak_patterns = ['password', 'secret', 'test', 'demo', 'default', 'change', '123']
+            if any(pattern in v.lower() for pattern in weak_patterns):
+                raise ValueError('Secret contains weak patterns and is not suitable for production')
+            
+            return v
     
     class Config:
         env_prefix = "TINYINTENT_"

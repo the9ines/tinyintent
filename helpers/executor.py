@@ -21,6 +21,15 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# Import location service for location awareness
+try:
+    from bridge.location_service import LocationContext, get_location_for_helper
+except ImportError:
+    # Fallback when location service not available
+    LocationContext = None
+    def get_location_for_helper(helper_id: str, context) -> Dict[str, Any]:
+        return {}
+
 # Import bridge modules with fallbacks
 try:
     from bridge.logs.audit import get_audit_logger
@@ -258,7 +267,8 @@ class HelperExecutor:
         self.audit_log.parent.mkdir(parents=True, exist_ok=True)
     
     def preview(self, helper_id: str, input_data: Dict[str, Any], 
-                session_id: str = None, execution_mode: str = "preview") -> Dict[str, Any]:
+                session_id: str = None, execution_mode: str = "preview",
+                location_context: Optional[LocationContext] = None) -> Dict[str, Any]:
         """Execute helper in preview mode."""
         # Check if helper is valid in registry
         if not self.registry.is_helper_valid(helper_id):
@@ -278,6 +288,11 @@ class HelperExecutor:
         
         # M10.3: Shadow and canary runs must always be dry_run=True for safety
         is_staging_mode = execution_mode in ["shadow", "canary"]
+        
+        # Enrich input with location context if available
+        if location_context and LocationContext:
+            location_info = get_location_for_helper(helper_id, location_context)
+            input_data = {**input_data, **location_info}
         
         # Log audit entry with execution mode
         self._log_audit("preview" if not is_staging_mode else execution_mode, 
@@ -315,7 +330,8 @@ class HelperExecutor:
     
     def execute(self, helper_id: str, input_data: Dict[str, Any], 
                 session_id: str = None, token_id: str = None, 
-                idempotency_key: str = None) -> Dict[str, Any]:
+                idempotency_key: str = None,
+                location_context: Optional[LocationContext] = None) -> Dict[str, Any]:
         """Execute helper in execution mode."""
         # Check if helper is valid in registry
         if not self.registry.is_helper_valid(helper_id):
@@ -340,6 +356,11 @@ class HelperExecutor:
         # Validate input
         if not helper.validate_input(input_data):
             raise ValueError(f"Input validation failed for helper {helper_id}")
+        
+        # Enrich input with location context if available
+        if location_context and LocationContext:
+            location_info = get_location_for_helper(helper_id, location_context)
+            input_data = {**input_data, **location_info}
         
         # Log audit entry
         self._log_audit("execute", helper_id, input_data, session_id, 

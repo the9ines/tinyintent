@@ -1,0 +1,38 @@
+purpose: "Real-time traffic conditions and routing information with location awareness"
+
+schema:
+  input: "./input.schema.json"
+  output: "./output.schema.json"
+
+capabilities:
+  preview: true
+  execute: true
+  emergency_close: false
+
+sandbox:
+  commands:
+    - "/usr/bin/python3"
+    - "./main.py"
+  network: "enabled"  # Required for future traffic API calls
+  timeouts:
+    - name: "default"
+      seconds: 10
+    - name: "execute" 
+      seconds: 15
+  cpu:
+    max_ms: 2000  # Allow CPU for traffic calculations
+  mem:
+    max_mb: 64    # Memory for route processing
+
+environment:
+  required: []
+  optional:
+    - "OPENROUTESERVICE_API_KEY"  # For future API integration
+    - "TRAFFIC_TIMEOUT"
+    - "DEFAULT_ROUTE_PREFERENCE"
+
+metadata:
+  version: "1.0.0"
+  author: "TinyIntent"
+  risk_level: "low"
+  audit_required: true

@@ -306,11 +306,20 @@ def main():
         units = input_data.get('units', 'imperial')
         include_forecast = input_data.get('include_forecast', False)
         
+        # Check for location from location context (provided by TinyIntent location service)
+        if not location and 'coordinates' in input_data:
+            location = input_data['coordinates']
+        elif not location and 'location_context' in input_data:
+            # Use coordinates from location context if available
+            location_ctx = input_data['location_context']
+            if 'latitude' in location_ctx and 'longitude' in location_ctx:
+                location = f"{location_ctx['latitude']},{location_ctx['longitude']}"
+        
         if not location:
             result = {
                 "status": "error",
                 "error_code": "MISSING_LOCATION",
-                "error_message": "Location is required"
+                "error_message": "Location is required (provide location parameter or location context)"
             }
         else:
             # Create weather helper and get data

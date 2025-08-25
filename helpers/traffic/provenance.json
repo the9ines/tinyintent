@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "helper_id": "traffic",
+  "timestamp": "2025-08-23T21:56:09.814131Z",
+  "generator": "claude-code-location-system-implementation",
+  "files": {
+    "helper.yaml": "60f8a8a76da8056d0b547e4b0b9db668e9f232db9edf83fbf4e77f61ca142dc1",
+    "input.schema.json": "0e8c533da892ff57e42dc543f6a77e9ab2043ca27e44152c06da0c88bcd89405",
+    "output.schema.json": "c74a5ddd285dbe1138ba25ae8bcbe5539a40465e5675ec9e6e79e1eecc8ea8ca",
+    "main.py": "8bd61c0f48fa6ad99ef77478bd0542f6ad4008023a8054d7358de467e118df14"
+  },
+  "digest": "8007d61744744dc0ecd20721dbf4ffaab39f97e9f347ddd17bb78c18e32f4c9a",
+  "sig": "ffa65ede07ae285d46355e55514568c5addc7d068067189a76697009a8fc7d27"
+}

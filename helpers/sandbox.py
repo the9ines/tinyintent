@@ -12,6 +12,7 @@ import signal
 import subprocess
 import tempfile
 import shutil
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -22,6 +23,8 @@ try:
     RESOURCE_LIMITS_AVAILABLE = True
 except ImportError:
     RESOURCE_LIMITS_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 # Import audit logger (M6.2) - with fallback for standalone helper usage
 try:
@@ -111,6 +114,78 @@ class HelperSandbox:
                 pass
             finally:
                 self.temp_workspace = None
+    
+    def _prepare_helper_files(self, helper_dir: Path, workspace: Path) -> Path:
+        """
+        Copy necessary helper files to isolated workspace for secure execution.
+        
+        This prevents helpers from accessing their source directory while still
+        allowing them to execute with their required files.
+        
+        Args:
+            helper_dir: Original helper directory path
+            workspace: Isolated workspace directory path
+            
+        Returns:
+            Path to the main executable in the workspace
+        """
+        if not helper_dir.exists():
+            raise FileNotFoundError(f"Helper directory not found: {helper_dir}")
+        
+        # Files that are safe to copy to workspace
+        safe_files = [
+            'main.py', 'main.js', 'main.sh',  # Main executables
+            'package.json', 'package-lock.json',  # Node.js packages
+            'requirements.txt',  # Python requirements (if needed)
+            'input.schema.json', 'output.schema.json',  # Schemas (for validation)
+            'health.py', 'health.js'  # Health check scripts
+        ]
+        
+        # Copy safe files to workspace
+        main_executable = None
+        copied_files = []
+        
+        for filename in safe_files:
+            source_file = helper_dir / filename
+            if source_file.exists() and source_file.is_file():
+                target_file = workspace / filename
+                
+                try:
+                    shutil.copy2(source_file, target_file)
+                    copied_files.append(filename)
+                    
+                    # Identify main executable
+                    if filename.startswith('main.'):
+                        main_executable = target_file
+                        # Make executable
+                        target_file.chmod(0o755)
+                        
+                except (OSError, PermissionError) as e:
+                    # Log but continue - some files might not be critical
+                    print(f"Warning: Could not copy {filename}: {e}")
+        
+        if not main_executable:
+            # Try to find any executable file
+            for filename in os.listdir(helper_dir):
+                if filename.startswith('main.') and (helper_dir / filename).is_file():
+                    source_file = helper_dir / filename
+                    target_file = workspace / filename
+                    try:
+                        shutil.copy2(source_file, target_file)
+                        target_file.chmod(0o755)
+                        main_executable = target_file
+                        copied_files.append(filename)
+                        break
+                    except (OSError, PermissionError):
+                        continue
+        
+        if not main_executable:
+            raise FileNotFoundError(f"No main executable found in helper directory: {helper_dir}")
+        
+        # Log successful file preparation
+        logger.debug(f"Prepared helper files in workspace: {copied_files}")
+        
+        return main_executable
     
     def _enforce_capability_restrictions(self, env: Dict[str, str]) -> Dict[str, str]:
         """
@@ -251,19 +326,31 @@ class HelperSandbox:
         process = None
         
         try:
-            # M10.7: Create isolated workspace for temp files but execute from helper directory
+            # M10.7: Create isolated workspace and prepare helper files for secure execution
             workspace = self.temp_workspace or self._create_temp_workspace()
             
-            # Start the process with capability-restricted environment in helper directory
-            # This allows relative paths like "./main.py" to work while still having workspace isolation
+            # Prepare helper files in isolated workspace (SECURITY FIX)
+            # This copies only necessary files and prevents access to helper source directory
+            main_executable = self._prepare_helper_files(cwd, workspace)
+            
+            # Update command to use the copied executable in workspace
+            if isinstance(cmd, list):
+                # Replace the first element (executable path) with workspace version
+                workspace_cmd = [str(main_executable)] + cmd[1:]
+            else:
+                # For string commands, replace with workspace executable
+                workspace_cmd = str(main_executable)
+            
+            # Start the process with capability-restricted environment in ISOLATED workspace
+            # This prevents access to helper source directory while maintaining functionality
             process = subprocess.Popen(
-                cmd,
+                workspace_cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 env=restricted_env,  # Use restricted environment with isolated temp dirs
-                cwd=cwd,  # Use original helper directory for command execution
+                cwd=workspace,  # SECURITY FIX: Execute in isolated workspace, not helper directory
                 preexec_fn=preexec_fn
             )
             
