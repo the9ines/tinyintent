@@ -200,4 +200,10 @@ make doctor
 
 **TinyIntent v2.0.0** - Built with ❤️ for voice-first AI interaction
 
+---
+
+Built by [the9ines.com](https://the9ines.com)
+
+**TinyIntent v2.0.0** - Voice-first AI interaction for your Mac
+
 **Note**: This is a local-first platform. No data leaves your Mac.
