@@ -260,4 +260,34 @@ status: ## Show project status
 	@echo "Recent activity:"
 	@ls -la $(DATA_DIR)/episodes/ 2>/dev/null || echo "No episode data"
 
-.PHONY: help bridgesrv doctor router-train router-eval router-clean analyze-edges learn-edges learn-edges-dry learn-edges-force monitor-router monitor-continuous learn promote autopilot autopilot-dry export-episodes export-summary clean-data backup-data lint format test clean status
+##@ Load Testing
+load-test: ## Run load tests with Locust web UI
+	@echo "$(GREEN)Starting Locust Load Testing...$(NC)"
+	@echo "================================"
+	@echo "$(YELLOW)Open http://localhost:8089 to configure and start tests$(NC)"
+	@cd tests/load && locust -f locustfile.py --host http://localhost:8787
+
+load-test-headless: ## Run headless load test (50 users, 60s)
+	@echo "$(GREEN)Running Headless Load Test...$(NC)"
+	@echo "============================="
+	@cd tests/load && locust -f locustfile.py --host http://localhost:8787 \
+		--headless --users 50 --spawn-rate 5 --run-time 60s \
+		--csv reports/load_test
+
+stress-test: ## Run stress test (200 users, 120s)
+	@echo "$(GREEN)Running Stress Test...$(NC)"
+	@echo "======================"
+	@cd tests/load && locust -f locustfile.py --host http://localhost:8787 \
+		--headless --users 200 --spawn-rate 20 --run-time 120s \
+		--csv reports/stress_test
+
+load-report: ## Show latest load test results
+	@echo "$(GREEN)Latest Load Test Results$(NC)"
+	@echo "========================"
+	@if [ -f tests/load/reports/load_test_stats.csv ]; then \
+		cat tests/load/reports/load_test_stats.csv | column -t -s, | head -20; \
+	else \
+		echo "$(YELLOW)No load test results found. Run 'make load-test-headless' first.$(NC)"; \
+	fi
+
+.PHONY: help bridgesrv doctor router-train router-eval router-clean analyze-edges learn-edges learn-edges-dry learn-edges-force monitor-router monitor-continuous learn promote autopilot autopilot-dry export-episodes export-summary clean-data backup-data lint format test clean status load-test load-test-headless stress-test load-report

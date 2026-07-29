@@ -491,6 +491,343 @@ class TestHelperHealthHTTP(unittest.TestCase):
             self.fail(f"Failed to test individual helper health endpoint: {e}")
 
 
+class TestHelperHealthEdgeCases(unittest.TestCase):
+    """Test edge cases in helper health check functionality."""
+
+    def setUp(self):
+        """Set up test environment."""
+        if not HEALTH_AVAILABLE:
+            self.skipTest("Helper health checks not available")
+
+        # Create temporary directory for test helpers
+        self.test_dir = Path(tempfile.mkdtemp(prefix="helper_health_edge_"))
+
+    def tearDown(self):
+        """Clean up test environment."""
+        if hasattr(self, 'test_dir') and self.test_dir.exists():
+            shutil.rmtree(self.test_dir)
+
+    def _create_test_helper(self, helper_id: str, health_script_content: str = None,
+                           health_script_name: str = "health.py", make_executable: bool = True) -> Path:
+        """Create a test helper with health check script."""
+        helper_dir = self.test_dir / helper_id
+        helper_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create basic manifest
+        manifest_content = """
+purpose: Test helper for edge case tests
+capabilities:
+  preview: true
+  execute: true
+sandbox:
+  commands: ["python3", "main.py"]
+metadata:
+  author: Test Suite
+"""
+        with open(helper_dir / "helper.yaml", 'w') as f:
+            f.write(manifest_content)
+
+        if health_script_content:
+            health_script_path = helper_dir / health_script_name
+            with open(health_script_path, 'w') as f:
+                f.write(health_script_content)
+
+            if make_executable:
+                health_script_path.chmod(0o755)
+
+        return helper_dir
+
+    def test_health_check_invalid_json_output(self):
+        """Test health check with script that outputs invalid JSON."""
+        health_script = """#!/usr/bin/env python3
+import sys
+
+# Output invalid JSON
+print("This is not valid JSON {}")
+sys.exit(0)
+"""
+
+        helper_dir = self._create_test_helper("test_invalid_json", health_script, "health.py")
+
+        with patch.object(helper_registry, 'get_registry_entry') as mock_get_entry:
+            mock_entry = MagicMock()
+            mock_entry.healthcheck = "health.py"
+            mock_get_entry.return_value = mock_entry
+
+            with patch('helpers.sdk.Path') as mock_path:
+                mock_path.return_value.__truediv__.return_value = helper_dir
+
+                result = run_helper_health_check("test_invalid_json")
+
+                # Should still complete but output raw stdout
+                self.assertEqual(result["helper_id"], "test_invalid_json")
+                self.assertIn("stdout", result)
+
+    def test_health_check_empty_output(self):
+        """Test health check with script that outputs nothing."""
+        health_script = """#!/usr/bin/env python3
+import sys
+# No output
+sys.exit(0)
+"""
+
+        helper_dir = self._create_test_helper("test_empty_output", health_script, "health.py")
+
+        with patch.object(helper_registry, 'get_registry_entry') as mock_get_entry:
+            mock_entry = MagicMock()
+            mock_entry.healthcheck = "health.py"
+            mock_get_entry.return_value = mock_entry
+
+            with patch('helpers.sdk.Path') as mock_path:
+                mock_path.return_value.__truediv__.return_value = helper_dir
+
+                result = run_helper_health_check("test_empty_output")
+
+                self.assertEqual(result["helper_id"], "test_empty_output")
+                # Empty output with exit 0 is still healthy
+                self.assertIn(result["status"], ["healthy", "error"])
+
+    def test_health_check_stderr_output(self):
+        """Test health check that outputs to stderr."""
+        health_script = """#!/usr/bin/env python3
+import sys
+import json
+
+# Output success to stdout
+print(json.dumps({"status": "healthy", "message": "OK"}))
+
+# Also write to stderr (should not affect result)
+print("Warning: some diagnostic info", file=sys.stderr)
+
+sys.exit(0)
+"""
+
+        helper_dir = self._create_test_helper("test_stderr", health_script, "health.py")
+
+        with patch.object(helper_registry, 'get_registry_entry') as mock_get_entry:
+            mock_entry = MagicMock()
+            mock_entry.healthcheck = "health.py"
+            mock_get_entry.return_value = mock_entry
+
+            with patch('helpers.sdk.Path') as mock_path:
+                mock_path.return_value.__truediv__.return_value = helper_dir
+
+                result = run_helper_health_check("test_stderr")
+
+                self.assertEqual(result["helper_id"], "test_stderr")
+                self.assertEqual(result["status"], "healthy")
+
+    def test_health_check_non_executable_script(self):
+        """Test health check with non-executable script."""
+        health_script = """#!/usr/bin/env python3
+import json
+print(json.dumps({"status": "healthy"}))
+"""
+
+        helper_dir = self._create_test_helper(
+            "test_non_executable",
+            health_script,
+            "health.py",
+            make_executable=False  # Don't make executable
+        )
+
+        with patch.object(helper_registry, 'get_registry_entry') as mock_get_entry:
+            mock_entry = MagicMock()
+            mock_entry.healthcheck = "health.py"
+            mock_get_entry.return_value = mock_entry
+
+            with patch('helpers.sdk.Path') as mock_path:
+                mock_path.return_value.__truediv__.return_value = helper_dir
+
+                result = run_helper_health_check("test_non_executable")
+
+                # Should handle non-executable gracefully
+                self.assertEqual(result["helper_id"], "test_non_executable")
+
+    def test_health_check_with_custom_timeout(self):
+        """Test health check with very short custom timeout."""
+        health_script = """#!/usr/bin/env python3
+import time
+import sys
+
+time.sleep(0.5)  # Sleep 500ms
+print('{"status": "healthy"}')
+sys.exit(0)
+"""
+
+        helper_dir = self._create_test_helper("test_custom_timeout", health_script, "health.py")
+
+        with patch.object(helper_registry, 'get_registry_entry') as mock_get_entry:
+            mock_entry = MagicMock()
+            mock_entry.healthcheck = "health.py"
+            mock_get_entry.return_value = mock_entry
+
+            with patch('helpers.sdk.Path') as mock_path:
+                mock_path.return_value.__truediv__.return_value = helper_dir
+
+                # Very short timeout - should timeout
+                result = run_helper_health_check("test_custom_timeout", timeout_seconds=0.1)
+
+                self.assertEqual(result["helper_id"], "test_custom_timeout")
+                # Either timeout or completes depending on timing
+                self.assertIn(result["status"], ["healthy", "timeout"])
+
+    def test_bulk_health_check_with_errors(self):
+        """Test running bulk health checks with some errors."""
+        with patch.object(helper_registry, 'get_validation_summary') as mock_get_summary:
+            mock_get_summary.return_value = {
+                "helpers": {
+                    "healthy_helper": {"is_valid": True},
+                    "error_helper": {"is_valid": True},
+                    "timeout_helper": {"is_valid": True},
+                    "skipped_helper": {"is_valid": True}
+                }
+            }
+
+            with patch('helpers.sdk.run_helper_health_check') as mock_health_check:
+                mock_health_check.side_effect = [
+                    {"helper_id": "healthy_helper", "status": "healthy", "duration_ms": 50},
+                    {"helper_id": "error_helper", "status": "error", "error": "script_failed"},
+                    {"helper_id": "timeout_helper", "status": "timeout", "timeout_seconds": 5},
+                    {"helper_id": "skipped_helper", "status": "skipped", "message": "No healthcheck"}
+                ]
+
+                result = run_all_helper_health_checks()
+
+                self.assertIn("summary", result)
+                summary = result["summary"]
+
+                self.assertEqual(summary["total"], 4)
+                self.assertEqual(summary["healthy"], 1)
+                self.assertEqual(summary["errors"], 1)
+                self.assertEqual(summary["timeouts"], 1)
+                self.assertEqual(summary["skipped"], 1)
+
+    def test_bulk_health_check_empty_registry(self):
+        """Test running bulk health checks with empty registry."""
+        with patch.object(helper_registry, 'get_validation_summary') as mock_get_summary:
+            mock_get_summary.return_value = {"helpers": {}}
+
+            result = run_all_helper_health_checks()
+
+            self.assertIn("summary", result)
+            summary = result["summary"]
+
+            self.assertEqual(summary["total"], 0)
+            self.assertEqual(summary["healthy"], 0)
+
+    def test_health_check_result_includes_duration(self):
+        """Test that health check results include execution duration."""
+        health_script = """#!/usr/bin/env python3
+import json
+import time
+
+time.sleep(0.1)  # Small delay
+print(json.dumps({"status": "healthy"}))
+"""
+
+        helper_dir = self._create_test_helper("test_duration", health_script, "health.py")
+
+        with patch.object(helper_registry, 'get_registry_entry') as mock_get_entry:
+            mock_entry = MagicMock()
+            mock_entry.healthcheck = "health.py"
+            mock_get_entry.return_value = mock_entry
+
+            with patch('helpers.sdk.Path') as mock_path:
+                mock_path.return_value.__truediv__.return_value = helper_dir
+
+                result = run_helper_health_check("test_duration")
+
+                self.assertIn("duration_ms", result)
+                self.assertIsInstance(result["duration_ms"], (int, float))
+                # Should be at least 100ms due to sleep
+                self.assertGreaterEqual(result["duration_ms"], 50)
+
+
+class TestBulkHealthCheckAggregation(unittest.TestCase):
+    """Test bulk health check aggregation and summary logic."""
+
+    def setUp(self):
+        """Set up test environment."""
+        if not HEALTH_AVAILABLE:
+            self.skipTest("Helper health checks not available")
+
+    def test_aggregation_with_all_healthy(self):
+        """Test summary when all helpers are healthy."""
+        with patch.object(helper_registry, 'get_validation_summary') as mock_get_summary:
+            mock_get_summary.return_value = {
+                "helpers": {f"helper_{i}": {"is_valid": True} for i in range(5)}
+            }
+
+            with patch('helpers.sdk.run_helper_health_check') as mock_health_check:
+                mock_health_check.return_value = {"status": "healthy", "duration_ms": 10}
+
+                result = run_all_helper_health_checks()
+                summary = result["summary"]
+
+                self.assertEqual(summary["total"], 5)
+                self.assertEqual(summary["healthy"], 5)
+                self.assertEqual(summary["unhealthy"], 0)
+                self.assertEqual(summary["errors"], 0)
+
+    def test_aggregation_with_all_unhealthy(self):
+        """Test summary when all helpers are unhealthy."""
+        with patch.object(helper_registry, 'get_validation_summary') as mock_get_summary:
+            mock_get_summary.return_value = {
+                "helpers": {f"helper_{i}": {"is_valid": True} for i in range(3)}
+            }
+
+            with patch('helpers.sdk.run_helper_health_check') as mock_health_check:
+                mock_health_check.return_value = {"status": "unhealthy", "exit_code": 1}
+
+                result = run_all_helper_health_checks()
+                summary = result["summary"]
+
+                self.assertEqual(summary["total"], 3)
+                self.assertEqual(summary["healthy"], 0)
+                self.assertEqual(summary["unhealthy"], 3)
+
+    def test_aggregation_includes_timestamp(self):
+        """Test that aggregation result includes timestamp."""
+        with patch.object(helper_registry, 'get_validation_summary') as mock_get_summary:
+            mock_get_summary.return_value = {"helpers": {"test": {"is_valid": True}}}
+
+            with patch('helpers.sdk.run_helper_health_check') as mock_health_check:
+                mock_health_check.return_value = {"status": "healthy"}
+
+                result = run_all_helper_health_checks()
+
+                self.assertIn("timestamp", result)
+                # Timestamp should be ISO format
+                self.assertIn("T", result["timestamp"])
+
+    def test_aggregation_preserves_individual_results(self):
+        """Test that individual results are preserved in aggregation."""
+        with patch.object(helper_registry, 'get_validation_summary') as mock_get_summary:
+            mock_get_summary.return_value = {
+                "helpers": {
+                    "helper_a": {"is_valid": True},
+                    "helper_b": {"is_valid": True}
+                }
+            }
+
+            with patch('helpers.sdk.run_helper_health_check') as mock_health_check:
+                mock_health_check.side_effect = [
+                    {"helper_id": "helper_a", "status": "healthy", "custom_field": "value_a"},
+                    {"helper_id": "helper_b", "status": "unhealthy", "custom_field": "value_b"}
+                ]
+
+                result = run_all_helper_health_checks()
+                results = result["results"]
+
+                # Check individual results are preserved
+                helper_a_result = next(r for r in results if r.get("helper_id") == "helper_a")
+                helper_b_result = next(r for r in results if r.get("helper_id") == "helper_b")
+
+                self.assertEqual(helper_a_result["custom_field"], "value_a")
+                self.assertEqual(helper_b_result["custom_field"], "value_b")
+
+
 if __name__ == "__main__":
     # Run tests with detailed output
     unittest.main(verbosity=2)

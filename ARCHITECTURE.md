@@ -77,7 +77,7 @@ bridge/
 ├── validation.py       # Input validation and sanitization
 ├── sandbox_security.py # Sandboxing security enforcement
 ├── secret_manager.py   # Scoped secret management
-├── gen_client.py       # Ollama client with circuit breaker
+├── location_service.py # GPS/location awareness system
 ├── provenance.py       # Agent signing and tamper detection
 └── logs/               # Audit logging system
 ```
@@ -109,7 +109,7 @@ bridge/
 
 ### 3. Router Layer (`router/`)
 
-**Purpose**: Intent classification using local CoreML models
+**Purpose**: Multi-domain intent classification using local CoreML models
 
 ```python
 router/
@@ -122,15 +122,17 @@ router/
 └── train_summary.json     # Training results and performance
 ```
 
-**Classification Flow**:
+**Multi-Domain Classification Flow**:
 ```
-User Input: "Show me recent error logs"
+User Input: "Are there network anomalies?"
      ↓
 CoreML Model Processing (SmallIntent.mlmodel)
      ↓
 Intent Classification: { route: "act", confidence: 0.94 }
      ↓
-Route Decision: Execute helper for log analysis
+Domain Detection: Network infrastructure keywords
+     ↓
+Route Decision: Execute network_monitor helper
 ```
 
 **Performance Characteristics**:
@@ -141,7 +143,7 @@ Route Decision: Execute helper for log analysis
 
 ### 4. Helper Layer (`helpers/`)
 
-**Purpose**: Sandboxed execution of specific tasks
+**Purpose**: Multi-domain automation with sandboxed execution
 
 ```python
 helpers/
@@ -150,16 +152,30 @@ helpers/
 ├── manifest.py          # Helper metadata management
 ├── sdk.py              # Helper development SDK
 ├── sandbox.py          # Sandboxing implementation
-├── bot_guard/          # Crypto trading helper
-│   ├── main.js         # Node.js implementation
+├── weather/            # Weather & location automation
+│   ├── main.py         # Weather data via Open-Meteo API
 │   ├── helper.yaml     # Helper metadata
-│   ├── input.schema.json
-│   └── output.schema.json
-└── log_tailer/         # System log analysis helper
-    ├── main.py         # Python implementation
+│   └── schemas/        # Input/output validation
+├── system_monitor/     # System performance monitoring
+│   ├── main.py         # CPU, memory, disk monitoring
+│   ├── helper.yaml     # Helper metadata
+│   └── schemas/        # Input/output validation
+├── network_monitor/    # Enterprise network infrastructure
+│   ├── main.py         # SNMP/API device monitoring
+│   ├── helper.yaml     # Cisco/Ubiquiti support
+│   └── schemas/        # Input/output validation
+├── bot_guard/          # Crypto trading automation
+│   ├── main.js         # Trading position management
+│   ├── helper.yaml     # Helper metadata
+│   └── schemas/        # Input/output validation
+├── log_tailer/         # System log analysis
+│   ├── main.py         # Log parsing and analysis
+│   ├── helper.yaml     # Helper metadata
+│   └── schemas/        # Input/output validation
+└── traffic/            # Traffic conditions & routing
+    ├── main.py         # Traffic data and route optimization
     ├── helper.yaml     # Helper metadata
-    ├── input.schema.json
-    └── output.schema.json
+    └── schemas/        # Input/output validation
 ```
 
 **Sandboxing Architecture**:
@@ -279,7 +295,7 @@ Helper Execution → Audit Logging → Response
 - **Session tracking**: Optional session continuity
 - **Format flexibility**: Text for voice, JSON for advanced shortcuts
 
-## 🧠 AI/ML Architecture
+## 🧠 Multi-Domain Routing Architecture
 
 ### Router Model Pipeline
 
@@ -292,25 +308,26 @@ Training Data → CreateML → CoreML → Deployment
 
 **Model Characteristics**:
 - **Input**: Text sequences up to 128 tokens
-- **Output**: `gen` (generative) or `act` (action) classification
+- **Output**: `act` (automation action) classification with domain hints
 - **Architecture**: Transformer-based text classifier
 - **Optimization**: INT8 quantization for Neural Engine
+- **Domain Awareness**: Keyword-based routing to appropriate helpers
 - **Evaluation**: Precision, recall, F1 score tracking
 
-### Generation Pipeline
+### Multi-Domain Automation Pipeline
 
 ```
-User Input → Router → Ollama → Response Formatting → Voice Output
-     ↓         ↓        ↓           ↓                 ↓
-  "What is   "gen"   llama3.1    "The weather     iPhone TTS
-   weather?"         8B model    today is..."     Playback
+User Input → Router → Helper Selection → Automation Execution → Voice Output
+     ↓         ↓            ↓                   ↓                 ↓
+"Check my    "act"    network_monitor    Real network        iPhone TTS
+network"              helper            device analysis      Playback
 ```
 
 **Components**:
-- **Circuit Breaker**: Prevents cascade failures from Ollama
-- **Async Client**: Non-blocking generation with timeouts
-- **Retry Logic**: Exponential backoff for transient failures
-- **Task Management**: Cancellation support for long requests
+- **Domain Detection**: Keyword-based helper selection
+- **Sandboxed Execution**: Isolated automation with resource limits
+- **Schema Validation**: Input/output validation for all helpers
+- **Multi-Language Support**: Python, Node.js, and other runtime support
 
 ## 🔄 Request Lifecycle
 
@@ -318,7 +335,7 @@ User Input → Router → Ollama → Response Formatting → Voice Output
 
 ```
 1. iPhone Shortcuts
-   ├─ Voice Input: "Show me system logs"
+   ├─ Voice Input: "Are there network anomalies?"
    ├─ HTTP POST: /shortcut/route
    └─ Headers: X-Shortcut-Token
 
@@ -333,18 +350,19 @@ User Input → Router → Ollama → Response Formatting → Voice Output
    ├─ Input Sanitization
    └─ Length Limit Check
 
-4. Intent Classification
+4. Multi-Domain Intent Classification
    ├─ CoreML Model Inference
    ├─ Confidence Threshold Check
-   └─ Route Decision: gen|act
+   ├─ Domain Detection: "network" keywords
+   └─ Route Decision: act → network_monitor
 
-5. Helper Execution (if act)
-   ├─ Helper Selection: log_tailer
+5. Helper Execution
+   ├─ Helper Selection: network_monitor
    ├─ Sandbox Creation
    ├─ Resource Limit Setup
    ├─ Schema Validation
-   ├─ Process Execution
-   └─ Output Capture
+   ├─ Process Execution (SNMP/API calls)
+   └─ Output Capture (anomaly analysis)
 
 6. Response Generation
    ├─ Output Formatting
@@ -356,12 +374,12 @@ User Input → Router → Ollama → Response Formatting → Voice Output
    ├─ Request/Response Logging
    ├─ Security Event Logging
    ├─ Performance Metrics
-   └─ Error Tracking
+   └─ Automation Tracking
 
 8. iPhone Response
    ├─ JSON Parsing
    ├─ Text Extraction
-   └─ TTS Playback
+   └─ TTS Playback: "Network status: 2 anomalies detected..."
 ```
 
 ### Error Handling Strategy
@@ -450,7 +468,7 @@ class SecuritySettings(BaseSettings):
 Developer Machine:
 ├─ tinyintent (CLI)
 ├─ Bridge (FastAPI) on localhost:8787
-├─ Ollama on localhost:11434
+├─ Multi-domain helpers (weather, system, network, etc.)
 ├─ iPhone on same WiFi network
 └─ Direct HTTP communication
 ```
@@ -460,7 +478,7 @@ Developer Machine:
 Mac Server:
 ├─ tinyintent as launchd service
 ├─ Bridge with production secrets
-├─ Ollama with optimized models
+├─ Full helper ecosystem deployed
 ├─ Tailscale for secure networking
 └─ iPhone over encrypted tunnel
 ```
@@ -474,4 +492,4 @@ Mac Server:
 
 ---
 
-This architecture provides a robust, secure, and maintainable foundation for voice-activated AI while maintaining simplicity and developer-friendliness.
+This architecture provides a robust, secure, and maintainable foundation for multi-domain voice automation while maintaining simplicity and extensibility for unlimited automation possibilities.

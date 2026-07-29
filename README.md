@@ -1,6 +1,6 @@
-# 🎯 TinyIntent v2.0.0 - Voice-Activated AI Assistant
+# 🎯 TinyIntent v2.0.0 - Multi-Domain Voice Automation Platform
 
-A streamlined, production-ready AI platform that connects your iPhone to local AI models via voice commands.
+The Swiss Army Knife of Voice Automation - one voice interface, unlimited automation possibilities. Automate anything across multiple domains with simple voice commands from your iPhone.
 
 ## ⚡ Quick Start
 
@@ -28,9 +28,40 @@ tinyintent
    - **Get Text from Contents of URL** (extract `speak` field)
    - **Speak Text**
 
-3. **Test**: Say *"Show me system logs"* and hear the response!
+3. **Test**: Try these voice commands and hear the responses!
+   - *"What's the weather in Austin?"* → Real-time weather data
+   - *"Check my system performance"* → CPU, memory, disk stats
+   - *"Are there any network anomalies?"* → Network health analysis
+   - *"Show me system logs"* → Recent error logs
 
-## 🎯 Simple Commands
+## 🎪 Automation Domains
+
+**🌤️ Weather & Location**
+- "What's the weather like?"
+- "Will it rain in Austin today?"
+- "Show me traffic conditions"
+
+**📊 System Monitoring**
+- "Check my system performance"
+- "How much CPU am I using?"
+- "Show me disk usage"
+
+**🌐 Network Infrastructure** 
+- "Are there any network issues?"
+- "Check my network devices"
+- "Backup router configurations"
+
+**💹 Trading & Finance**
+- "Show my crypto positions"
+- "Check market conditions"
+- "Close risky positions"
+
+**🔧 DevOps & Logs**
+- "Show me error logs"
+- "Check system health"
+- "Monitor application status"
+
+## 🎯 Platform Commands
 
 ```bash
 tinyintent              # Start server (default: port 8787)
@@ -61,11 +92,15 @@ tinyintent/
 │   ├── SmallIntent.mlmodel  # CoreML intent classifier
 │   ├── train_router.swift  # Model training
 │   └── data/            # Training datasets
-├── helpers/             # Sandboxed task execution
-│   ├── bot_guard/       # Crypto trading helper
+├── helpers/             # Multi-domain automation helpers
+│   ├── weather/         # Weather data & forecasting
+│   ├── system_monitor/  # CPU, memory, disk monitoring
+│   ├── network_monitor/ # Enterprise network infrastructure
+│   ├── bot_guard/       # Crypto trading automation
 │   ├── log_tailer/      # System log analysis
-│   ├── registry.py      # Helper discovery
-│   └── executor.py      # Sandboxed execution
+│   ├── traffic/         # Traffic conditions & routing
+│   ├── registry.py      # Helper ecosystem management
+│   └── executor.py      # Sandboxed execution engine
 ├── data/episodes/       # Episode logging & storage
 ├── tests/               # Comprehensive test suites
 ├── scripts/             # Utility & automation scripts
@@ -93,9 +128,9 @@ tinyintent/
 
 ### 🧠 SmallIntent Router  
 - **Model**: `SmallIntent.mlmodel` (CoreML, runs on Neural Engine)
-- **Classification**: `gen` (generative) vs `act` (action execution)
-- **Training**: Swift + CreateML → CoreML artifacts
-- **Performance**: Sub-10ms inference on Apple Silicon
+- **Classification**: Routes voice commands to appropriate automation helpers
+- **Training**: Swift + CreateML → CoreML artifacts for fast local inference
+- **Performance**: Sub-10ms routing on Apple Silicon
 
 ### 🤖 Helper Framework
 - **Runtime**: Node.js sandboxed execution with capability isolation

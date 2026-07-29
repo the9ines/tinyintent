@@ -1,12 +1,14 @@
-# 📄 TinyIntent v2.0.0: Mac-First Local Intelligence Platform
+# 📄 TinyIntent v2.0.0: Multi-Domain Voice Automation Platform
 
-This document outlines the product requirements and implementation plan for TinyIntent v2.0.0, a streamlined, production-ready AI platform for voice-activated personal assistant tasks.
+This document outlines the product requirements and implementation plan for TinyIntent v2.0.0, a versatile voice automation platform that handles diverse tasks across multiple domains.
 
 ## 🎯 Project Overview
 
-**Core Purpose**: Voice-first AI assistant that routes iPhone Siri commands to local AI models and executes actions through sandboxed helpers.
+**Core Purpose**: Jack-of-all-trades voice automation platform that routes iPhone Siri commands to specialized helpers for practical task automation.
 
-**Key Innovation**: Seamless voice interaction via iPhone Shortcuts → Local CoreML routing → Sandboxed execution.
+**Key Innovation**: Seamless voice interaction via iPhone Shortcuts → Smart routing → Multi-domain automation execution.
+
+**Platform Identity**: Swiss Army Knife of Voice Automation - one voice interface, unlimited automation possibilities.
 
 ## 📋 Project Structure
 
@@ -30,7 +32,7 @@ This document outlines the product requirements and implementation plan for Tiny
 - **Router**: SmallIntent.mlmodel (CoreML, ANE-accelerated)
 - **Repository**: Single monorepo with production packaging
 - **Bridge**: FastAPI service on port 8787 (LAN + Tailscale ready)
-## 🧠 Core Capabilities
+## 🎪 Multi-Domain Automation Capabilities
 
 ### 📱 M11.0: iPhone Shortcut Voice Interface
 - **Endpoint**: `POST /shortcut/route` with `X-Shortcut-Token` auth
@@ -45,17 +47,25 @@ This document outlines the product requirements and implementation plan for Tiny
 - **Fallback**: Heuristic classification if model fails
 - **Performance**: Sub-10ms inference on Apple Silicon
 
-### 🧹 Pluggable Local LLM Integration
-**models.yaml configuration**:
-- `small`: llama3.1:8b-instruct-q5_K_M
-- `medium`: qwen2.5:32b-instruct-q4_K_M  
-- `large`: llama3.1:70b-instruct-q4_K_M
+### 🔧 Multi-Domain Helper Ecosystem
+**Automation Domains**:
+- **Weather & Location**: Real-time weather data with GPS awareness
+- **System Monitoring**: CPU, memory, disk, network performance tracking  
+- **Network Infrastructure**: Enterprise Cisco/Ubiquiti device monitoring with anomaly detection
+- **Trading & Finance**: Crypto position monitoring and trade execution
+- **DevOps & Logs**: System log analysis and infrastructure monitoring
+- **Extensible Framework**: Add any automation domain via helper development
+**Helper Categories**:
+- **Information**: Weather, system stats, network status
+- **Infrastructure**: Network monitoring, system administration, DevOps
+- **Finance**: Trading, portfolio management, market analysis
+- **Productivity**: Log analysis, task automation, monitoring
 
-**Overrides**:
-- Environment variables (MODEL_SMALL, etc.)
-- Per-request LLM preference  
-- `make doctor` provides readiness status
-- `GET /system/doctor` provides system health API
+**Management**:
+- `make doctor` provides helper readiness status
+- `GET /system/doctor` provides helper ecosystem health API
+- Hot-reload support for helper development
+- Comprehensive helper validation and sandboxing
 
 ### 🌉 Modular Bridge API
 **Health & Status**:
@@ -63,8 +73,8 @@ This document outlines the product requirements and implementation plan for Tiny
 - `GET /shortcut/ping` - iPhone Shortcut health check
 
 **Core Routing**:
-- `POST /route` - Routes text as gen, act, abstain  
-- `POST /feedback` - Attaches result metadata
+- `POST /route` - Routes voice commands to appropriate helpers
+- `POST /feedback` - Attaches execution result metadata
 
 **Management**:
 - `POST /system/emergency/kill` - Emergency disable execution

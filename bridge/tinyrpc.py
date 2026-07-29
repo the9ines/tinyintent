@@ -62,27 +62,65 @@ def setup_logging() -> None:
     )
 
 
+def get_trusted_helpers() -> list:
+    """Get list of trusted helper IDs from registry."""
+    try:
+        validation_summary = helper_registry.get_validation_summary()
+        helpers = validation_summary.get("helpers", {})
+        return [
+            helper_id for helper_id, info in helpers.items()
+            if info.get("lifecycle", {}).get("state") == "trusted"
+        ]
+    except Exception:
+        return []
+
+
 async def network_anomaly_watcher() -> None:
     """
-    Background watcher for network anomaly detection.
-    
-    Monitors network devices for anomalies and triggers alerts/backups as needed.
+    Background watcher for network anomaly detection and trusted helper rollback.
+
+    Monitors trusted helpers for high error rates and automatically deprecates
+    helpers that exceed the error threshold within the monitoring window.
+
+    Configuration via environment variables:
+    - NETWORK_CHECK_INTERVAL_S: Check interval in seconds (default: 300)
+    - TINYINTENT_ROLLBACK_ENABLED: Enable rollback feature (default: false)
+    - TINYINTENT_ROLLBACK_WINDOW_HOURS: Metrics window in hours (default: 24)
+    - TINYINTENT_ERROR_RATE_THRESHOLD: Error rate threshold (default: 0.15)
     """
     import asyncio
     import os
-    
+
     logger = structlog.get_logger()
-    
+
     # Get network monitoring configuration
     check_interval_seconds = int(os.getenv("NETWORK_CHECK_INTERVAL_S", "300"))  # 5 minutes
-    
+
+    # Rollback configuration - M10.4 feature
+    rollback_enabled = os.getenv("TINYINTENT_ROLLBACK_ENABLED", "false").lower() == "true"
+    window_hours = int(os.getenv("TINYINTENT_ROLLBACK_WINDOW_HOURS", "24"))
+    error_rate_threshold = float(os.getenv("TINYINTENT_ERROR_RATE_THRESHOLD", "0.15"))
+
+    # Get audit logger instance
+    audit_logger = get_audit_logger()
+
     if os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower() in ["debug", "info"]:
-        logger.info("Network anomaly watcher started", check_interval=check_interval_seconds)
-    
+        logger.info("Network anomaly watcher started",
+                   check_interval=check_interval_seconds,
+                   rollback_enabled=rollback_enabled)
+
     while True:
         try:
-            # Network monitoring will be handled by network_monitor helper
+            # Wait for check interval
             await asyncio.sleep(check_interval_seconds)
+
+            # Skip rollback checks if feature is disabled
+            if not rollback_enabled:
+                continue
+
+            # Get current trusted helpers
+            trusted_helpers = get_trusted_helpers()
+
             for helper_id in trusted_helpers:
                 try:
                     # Get metrics for the rollback window
@@ -160,11 +198,11 @@ async def network_anomaly_watcher() -> None:
                                 })
                             
                             logger.error("Failed to rollback helper", helper_id=helper_id)
-                
+
                 except Exception as helper_error:
-                    logger.error("Error checking helper for rollback", 
+                    logger.error("Error checking helper for rollback",
                                helper_id=helper_id, error=str(helper_error))
-                    
+
                     if audit_logger:
                         audit_logger.log_entry({
                             "action": "rollback_check_error",
@@ -172,10 +210,7 @@ async def network_anomaly_watcher() -> None:
                             "error": str(helper_error),
                             "success": False
                         })
-            
-            # Wait for next check interval
-            await asyncio.sleep(check_interval_seconds)
-            
+
         except asyncio.CancelledError:
             if os.getenv("TINYINTENT_LOG_LEVEL", "warning").lower() in ["debug", "info"]:
                 logger.info("Rollback watcher cancelled")
@@ -243,15 +278,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except ImportError:
             # Fallback validation if secret_validator not available
             logger.warning("Advanced secret validation unavailable, using basic validation")
-        
-        # Initialize components
-        await async_ollama_client.health_check()
-        if log_level in ["debug", "info"]:
-            logger.info("Ollama client initialized")
-        
+
         # M10.4: Start background rollback watcher for trusted agents
         import asyncio
-        rollback_task = asyncio.create_task(rollback_watcher())
+        rollback_task = asyncio.create_task(network_anomaly_watcher())
         if log_level in ["debug", "info"]:
             logger.info("Agent rollback watcher started")
         
@@ -275,8 +305,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pass
             if log_level in ["debug", "info"]:
                 logger.info("Agent rollback watcher stopped")
-        
-        await async_ollama_client.close()
 
 
 def create_app() -> FastAPI:
