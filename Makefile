@@ -1,4 +1,4 @@
-.PHONY: train build test agent clean ios-model bridge-venv bridge bridge-stop bridge-logs iphone-test doctor router-doctor router-smoke
+.PHONY: train build test agent clean ios-model bridge-venv bridge bridge-stop bridge-logs iphone-test doctor router-doctor router-smoke router-clean router-rebuild
 
 # M1 Targets (Training Pipeline)
 train:
@@ -139,3 +139,11 @@ router-doctor:
 router-smoke:
 	@echo "[router-smoke] Running router smoke tests..."
 	@bash tests/router_smoke.sh
+
+router-clean:
+	@echo "[router-clean] Cleaning router artifacts..."
+	@bash scripts/router_clean.sh
+
+router-rebuild:
+	@echo "[router-rebuild] Rebuilding router from scratch..."
+	@bash scripts/router_rebuild.sh

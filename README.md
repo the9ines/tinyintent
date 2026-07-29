@@ -99,13 +99,22 @@ make bridge-stop && make bridge
 
 **If you see `router_classification_failed: rc=...`**:
 ```bash
-make build
-rm -rf router/*.mlmodelc
+make router-clean
 make train
-make router-doctor
+make build
+make router-smoke
+```
+Or use the one-command rebuild kit:
+```bash
+make router-rebuild
 ```
 - `rc=2` usually means "model missing or not readable"
 - Ensure Xcode Command Line Tools are installed: `xcode-select --install`
+
+**Router rebuild kit commands**:
+- `make router-clean` - Remove compiled models and artifacts
+- `make router-rebuild` - Complete rebuild with verification
+- `make router-smoke` - Quick validation tests
 
 **Missing Ollama dependency**:
 ```bash

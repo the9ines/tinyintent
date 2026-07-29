@@ -273,6 +273,8 @@ def route():
                     if route_label not in {"gen", "act"}:
                         log_line(f"router_classification_invalid: {route_label} -> heuristic")
                         route_label = "auto"  # Reset to trigger heuristic
+                    else:
+                        log_line(f"[router] rc=0 label={route_label}")
                 else:
                     # Detailed logging for failed router
                     bytes_out = len(proc.stdout)
