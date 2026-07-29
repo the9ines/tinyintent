@@ -18,20 +18,35 @@ ehthumbs.db
 Thumbs.db
 
 # Development files
-bridge/logs/
+# Exclude log-directory *contents* but not the directory itself, so the
+# source modules that live alongside the logs stay tracked.
+bridge/logs/*
+!bridge/logs/*.py
 *.log
 .env
 *.backup
 *.tmp
-*AUDIT*
 *ci_results*
+
+# Stray git format-patch artifacts
+*.patch
 
 # TinyIntent specific
 router/*.mlmodel*
 *.mlmodelc
 data/episodes/*.db
 data/episodes/*.ndjson
+
+# Secrets and key material. These must never be committed. The launchd
+# plists embed TINYINTENT_SECRET, so every plist is excluded, not just the
+# ones under launchd/.
 launchd/*.plist
+*.plist
+bridge/keys/
+bridge/tokens/
+
+# Local agent tooling
+.claude/
 
 # Editor files
 .vscode/
